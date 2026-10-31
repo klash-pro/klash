@@ -101,8 +101,11 @@ mem.Next()                              // stack: rename-project › rename-test
 ```
 
 So a long task runs with the context holding the plan, the results so far and
-the present todo's work, however many todos there are. Compaction stops being
-how a long task survives and becomes a backstop. In the model server's log of
+the present todo's work, however many todos there are. And when one todo's own
+work outgrows the context before it is done, Gnosh slides instead of
+compacting: the oldest rounds of the frame the agent stands in leave the
+context, since mem holds its plan, its results and its thoughts, and the agent
+is told so. A summary is made only with no frame to cut. In the model server's log of
 a real run, the request after a 3K-token pop re-read 2,572 tokens instead of
 the whole 20K-token conversation, and the requests after it were back to a
 few hundred each: the cache survived the cut.

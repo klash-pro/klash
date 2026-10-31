@@ -1262,9 +1262,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	// Sent whole, the new model read all of it before it answered, and only
 	// then was it summarized. Just after a summary the session's count is
 	// the summary's alone; the next step's tells whether the summary
-	// brought the conversation under the point (see compacts).
+	// brought the conversation under the point (see compacts). A session
+	// standing in frames slides instead when it can (see slides): the
+	// prompt's frame line then tells the model what left its context.
 	if _, summarized := a.justSummarized.Get(call.SessionID); !summarized &&
-		a.compacts(call.SessionID, int64(largeModel.CatwalkCfg.ContextWindow), currentSession.PromptTokens+currentSession.CompletionTokens-a.frames.estimate(call.SessionID)) {
+		a.compactsNow(ctx, call.SessionID, int64(largeModel.CatwalkCfg.ContextWindow), currentSession.PromptTokens+currentSession.CompletionTokens-a.frames.estimate(call.SessionID)) {
 		if err := a.compactBeforeRequest(ctx, genCtx, &call); err != nil {
 			if persistErr := a.persistCanceledTurn(ctx, call, false); persistErr != nil {
 				return nil, persistErr
@@ -1310,6 +1312,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	var cutSent bool
 	var cutTokens int64
 	var shouldSummarize bool
+	// slideLine is what a slide made after a step (see compactsOrSlides)
+	// tells the model before its next reply, until a step puts it in.
+	var slideLine string
 	// The tool calls the agent was caught repeating, when that is what
 	// stopped the run; see loopContinuation.
 	var loopCalls []fantasy.ToolCallContent
@@ -1388,6 +1393,14 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				return callContext, prepared, err
 			}
 			added = append(added, large...)
+			if slideLine != "" {
+				slid, err := a.remindOfSlide(callContext, call.SessionID, slideLine)
+				if err != nil {
+					return callContext, prepared, err
+				}
+				added = append(added, slid...)
+				slideLine = ""
+			}
 			if len(added) > 0 {
 				prepared.Messages = append(prepared.Messages, added...)
 				injected = append(injected, injectedMessages{at: inputLen, messages: added})
@@ -1602,9 +1615,16 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		StopWhen: []fantasy.StopCondition{
 			func(_ []fantasy.StepResult) bool {
 				// A pop in this step took part of the conversation out of
-				// the next request: the count is read net of it.
+				// the next request: the count is read net of it. Over the
+				// point, a session standing in frames slides when it can
+				// and goes on, told so before its next reply (slideLine);
+				// else the turn stops here for the summary.
 				tokens := currentSession.CompletionTokens + currentSession.PromptTokens - a.frames.estimate(call.SessionID)
-				if a.compacts(call.SessionID, int64(largeModel.CatwalkCfg.ContextWindow), tokens) {
+				compact, slid := a.compactsOrSlides(genCtx, call.SessionID, int64(largeModel.CatwalkCfg.ContextWindow), tokens)
+				if slid != "" {
+					slideLine = slid
+				}
+				if compact {
 					shouldSummarize = true
 					return true
 				}
@@ -2575,6 +2595,22 @@ func (a *sessionAgent) frameLine(ctx context.Context, call *SessionAgentCall) {
 	if call.memLine {
 		call.frameLine = a.frames.stackLine(ctx, call.SessionID)
 	}
+}
+
+// remindOfSlide is the line to put before the model's next reply when a
+// slide, after a step of the turn, took the start of a frame out of its
+// context (sessionAgent.slides): a hidden user message, as the large-step
+// line is. A slide before the prompt needs none: the prompt's frame line
+// tells of it.
+func (a *sessionAgent) remindOfSlide(ctx context.Context, sessionID, line string) ([]fantasy.Message, error) {
+	msg, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
+		Role:  message.User,
+		Parts: []message.ContentPart{message.TextContent{Text: "<system_reminder>" + line + "</system_reminder>", Hidden: true}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return msg.ToAIMessage(), nil
 }
 
 // remindOfLargeStep is the line to put before the model's next reply when

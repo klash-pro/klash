@@ -146,9 +146,15 @@ agent's context is a call stack, a todo's work leaves it when the todo
 returns, and its result stays, as a function's locals go when it returns and
 its value comes back. A long task is its todos done one frame at a time: the
 context holds the plan, the results so far and the present todo's work,
-however long the task runs, and compaction becomes a backstop: no more
-compactions to get a long task through, since a todo's work leaves the
-context as the todo finishes.
+however long the task runs: no more compactions to get a long task through,
+since a todo's work leaves the context as the todo finishes. When one todo's
+own work would overflow the context before it is done, Gnosh *slides*
+instead of compacting: the oldest rounds of the frame the agent stands in
+leave the context (with frames under it, the whole body of the bottom frame
+goes first), mem holding their plan, results and thoughts, and the agent is
+told: "The start of `x` left your context to make room; mem.Show("x") has
+the plan, the results so far and the thoughts." The prompt it is answering
+is never cut. A summary is made only when there is no frame to cut.
 
 Line by line, where the agent stands (its stack, bottom to top) and what
 mem holds; a todo is made under the frame you stand in, and `mem.Next()`

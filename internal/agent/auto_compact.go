@@ -167,6 +167,44 @@ func (a *sessionAgent) compacts(sessionID string, cw, tokens int64) bool {
 	return level != compactNever && autoSummarize(cw, window, tokens, a.disableAutoSummarize, level == compactAsAsked)
 }
 
+// slides is what a session standing in frames does at the point at which
+// it would be compacted (see compacts): the start of its oldest open
+// frame's work leaves the model's context instead (frameStacks.slide),
+// since mem holds that frame's plan, its results and its thoughts, and the
+// summary is kept for a session with no frame to cut. The slide frees what
+// is over the point and a tenth of the window besides, so the rounds that
+// follow have room. It answers the line that tells the model what left,
+// and whether a slide was made.
+func (a *sessionAgent) slides(ctx context.Context, sessionID string, cw, tokens int64) (string, bool) {
+	level, _ := a.compactLevels.Get(sessionID)
+	window := cw
+	if window <= 0 {
+		window = unknownContextWindowFallback
+	}
+	need := tokens - compactAt(cw, a.autoCompactWindow(), level == compactAsAsked) + window/10
+	line, _, ok := a.frames.slide(ctx, sessionID, need)
+	return line, ok
+}
+
+// compactsOrSlides is what a session over the point at which it is
+// compacted (see compacts) does: standing in frames it slides when it can
+// (see slides), else it is summarized. compact says the latter; slid is
+// the line that tells the model of a slide.
+func (a *sessionAgent) compactsOrSlides(ctx context.Context, sessionID string, cw, tokens int64) (compact bool, slid string) {
+	if !a.compacts(sessionID, cw, tokens) {
+		return false, ""
+	}
+	line, ok := a.slides(ctx, sessionID, cw, tokens)
+	return !ok, line
+}
+
+// compactsNow is compactsOrSlides before a prompt goes out, where the
+// prompt's frame line tells the model of a slide (frameStacks.stackLine).
+func (a *sessionAgent) compactsNow(ctx context.Context, sessionID string, cw, tokens int64) bool {
+	compact, _ := a.compactsOrSlides(ctx, sessionID, cw, tokens)
+	return compact
+}
+
 // compactBeforeRequest summarizes the session's conversation before the
 // turn of call sends its prompt, as that turn's first work: in its
 // context, genCtx, so Esc stops it, and with the prompt kept out of it, to
