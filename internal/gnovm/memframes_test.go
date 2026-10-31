@@ -41,26 +41,29 @@ func TestHostFrames(t *testing.T) {
 		return res
 	}
 
+	// At the empty root there is nothing to step into: a kept no-op.
+	res := run("s1", nil, `mem.Next()`)
+	require.Contains(t, res.Output, "no next todo: nothing is open")
+	require.Empty(t, res.Frames)
+
 	ok("s1", nil, `f := mem.Todo("fix the flaky test"); f.Todo("find why it fails"); f.Todo("rerun the suite")`)
-	res := ok("s1", nil, `mem.Push("fix-flaky-test")`)
+	res = ok("s1", nil, `mem.Frame("fix-flaky-test").Push()`)
 	require.Equal(t, []MemFrame{{Kind: "push", Id: "fix-flaky-test", Purpose: "fix the flaky test", Session: "s1"}}, res.Frames)
 	require.Len(t, res.MemGoals, 1, "a push changes the goal, as the task list sees it")
 
 	// The stack is the agent's: with none given, the session is at the root.
 	res = run("s1", nil, `mem.Pop("x")`)
 	require.ErrorContains(t, res.Err, "nothing to pop: you are at the root")
-	res = run("s1", nil, `mem.Push()`)
-	require.Contains(t, res.Output, "nothing to push at the root")
 
 	stack := []string{"fix-flaky-test"}
-	res = ok("s1", stack, `mem.Push()`)
+	res = ok("s1", stack, `mem.Next()`)
 	require.Equal(t, []MemFrame{{Kind: "push", Id: "fix-flaky-test/find-why-fails", Purpose: "find why it fails", Session: "s1"}}, res.Frames)
 	stack = append(stack, "fix-flaky-test/find-why-fails")
 	ok("s1", stack, `mem.Think("port", "the shared port is 8080")`)
 
 	// Pop then push in one input: both events, in order; no hint, since a
 	// push followed.
-	res = ok("s1", stack, "mem.Pop(\"it races on the shared port\")\nmem.Push()")
+	res = ok("s1", stack, "mem.Pop(\"it races on the shared port\")\nmem.Next()")
 	require.Equal(t, []MemFrame{
 		{Kind: "pop", Id: "fix-flaky-test/find-why-fails", Purpose: "find why it fails", Result: "it races on the shared port", Thoughts: 1, Session: "s1"},
 		{Kind: "push", Id: "fix-flaky-test/rerun-suite", Purpose: "rerun the suite", Session: "s1"},
@@ -100,9 +103,14 @@ func TestHostFrames(t *testing.T) {
 	require.Contains(t, res.Output, "held by this session")
 
 	// Another session: the step is held.
-	res = run("s2", nil, `mem.Push("fix-flaky-test/rerun-suite")`)
+	res = run("s2", nil, `mem.Frame("fix-flaky-test/rerun-suite").Push()`)
 	require.ErrorContains(t, res.Err, "`fix-flaky-test/rerun-suite` is held by session s1: only it can pop, close or drop it")
 	require.Empty(t, res.Frames, "a refused input records no event")
+	// At the root, Next steps into the newest open task's next free todo;
+	// with none free, it is a no-op that says what holds them.
+	res = run("s3", nil, `mem.Next()`)
+	require.Contains(t, res.Output, "no next todo: `fix-flaky-test` \"fix the flaky test\": nothing in it can be done now: `fix-flaky-test/rerun-suite` is held by session s1")
+	require.Empty(t, res.Frames)
 
 	// A redacted secret leaves the journal's frames record too: the pop's
 	// result in /mem log.

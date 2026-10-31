@@ -229,7 +229,7 @@ func (m *Mem) refuseOpenTitle(title string) {
 		if len(it.Steps) > 0 {
 			aside += ", " + progress(it)
 		}
-		panic(ref(n, it.Title) + " (" + aside + ") is already open: enter it with mem.Push(\"" + n + "\") and add to it with mem.Todo(\"…\"), or give other work a task that tells them apart")
+		panic(ref(n, it.Title) + " (" + aside + ") is already open: step into it with mem.Frame(\"" + n + "\").Push() and add to it with mem.Todo(\"…\"), or give other work a task that tells them apart")
 	}
 }
 

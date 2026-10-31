@@ -74,7 +74,7 @@ func goalTitle(condition string) string {
 func GoalDirective(b GoalBinding) string {
 	return fmt.Sprintf("Goal `%[1]s` %[2]q is set: %[3]s\n\n"+
 		"Plan it as todos (`mem.Todo(\"…\")` for each, in order) and work through them in frames: you stand in the goal already, so "+
-		"`mem.Push()` enters its first todo, and `mem.Pop(\"what came of it\")` then `mem.Push()` on the next line moves on. "+
+		"`mem.Next()` steps into its first todo, and `mem.Pop(\"what came of it\")` then `mem.Next()` on the next line moves on. "+
 		"Keep as facts what future sessions "+
 		"should know, as you learn it. Once the goal holds, close it with `mem.Done(%[1]q, \"<command> → <result>\")`; "+
 		"a separate check confirms it then. If the condition says when to stop and that has happened, drop the steps "+

@@ -9,16 +9,11 @@
 
 package gnomem
 
-// Next returns what to do next in goal name, for the session that asks: ""
-// if the goal is closed, waits, or is for the user; else the first open item
-// under it, in outline order, with no open steps, no wait on it or above it,
-// not for the user, and not started by another session; else the goal
-// itself, if it has no open steps; else "".
-func (m *Mem) Next(name string) string {
-	g := m.item(name)
-	return m.nextFor(name, g, caller())
-}
-
+// nextFor is what to do next in task name, for session: "" if the task is
+// closed, waits, or is for the user; else the first open item under it, in
+// outline order, with no open todos, no wait on it or above it, not for the
+// user, and not started by another session; else the task itself, if it
+// has no open todos; else "".
 func (m *Mem) nextFor(name string, g *Todo, session string) string {
 	if g.Status != "" || m.waiting(g) || g.For != "" {
 		return ""

@@ -315,9 +315,9 @@ func (s *framesScenario) notice() (notify.Notification, bool) {
 }
 
 const (
-	pushG      = `mem.Push("g")`
-	pushS1     = `mem.Push("g/s1")`
-	popS1PushS = "mem.Pop(\"found it\")\nmem.Push()"
+	pushG      = `mem.Frame("g").Push()`
+	pushS1     = `mem.Frame("g/s1").Push()`
+	popS1PushS = "mem.Pop(\"found it\")\nmem.Next()"
 	popS1      = `mem.Pop("found it")`
 	popS2      = `mem.Pop("20 of 20 passed")`
 	popG       = `mem.Pop("fixed")`

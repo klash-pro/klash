@@ -32,7 +32,7 @@ type memSource struct {
 // last), imports or none (a package used without one is imported; mem's
 // own, import "mem", is dropped), and declarations. A declaration of a func stands at the top level; others run
 // where they are, in order with the statements. A read of mem standing as
-// a statement of its own (mem.Show(), mem.Find(…), mem.Next(…),
+// a statement of its own (mem.Show(), mem.Find(…), mem.JSON(…),
 // mem.JSON(…), or mem alone, trailing) prints what it says.
 func shapeMemInput(code string) (memSource, error) {
 	prog, err := normalize(code, 1, nil, nil)
@@ -97,7 +97,7 @@ func declaresFunc(decls string) bool {
 }
 
 // memReads are mem's calls that return text to show.
-var memReads = map[string]bool{"Show": true, "Find": true, "Next": true, "JSON": true, "Check": true, "String": true}
+var memReads = map[string]bool{"Show": true, "Find": true, "JSON": true, "Check": true, "String": true}
 
 // memShown are mem's calls that return a value with a String of its own to
 // show: a Frame, a Thought; and Recall, whose Namables are shown one a
@@ -187,7 +187,7 @@ func memHint(code, msg string) string {
 		}
 	}
 	if strings.Contains(msg, "missing field PushFrame") || strings.Contains(msg, "missing field PopFrame") || strings.Contains(msg, "missing field PushThought") {
-		return "frames are entered with mem.Push() (the next todo), mem.Push(id), or .Push() on a Frame or a Thought, and left with mem.Pop(result)"
+		return "frames are entered with mem.Next() (the next todo) or .Push() on a Frame or a Thought, and left with mem.Pop(result)"
 	}
 	if strings.Contains(msg, "cannot use *klash/gnomem/v2.Frame as string") {
 		return "mem.Todo(…) gives a Frame, not a name: pass its Id, or the name mem printed in backticks"
@@ -208,6 +208,7 @@ var (
 var memMoved = map[string]string{
 	"Add":      `mem.Todo("what to get done") adds a todo under the one you are in, a top-level one at the root, and names it for you`,
 	"Goal":     `mem.Todo("what to get done") adds a todo under the one you are in, a top-level one at the root, and names it for you; .Push() enters it`,
+	"Push":     `mem.Next() steps into the next todo under the frame you are in (at the root, of the newest open task); a particular frame: mem.Frame("name").Push(), mem.Todo("…").Push()`,
 	"Step":     `mem.Todo("a todo") adds one under the todo you are in; mem.Frame("name").Todo("…") adds under another`,
 	"Steps":    `mem.Todo("a todo") adds one under the todo you are in, one call each, in order; mem.Frame("name").Todo("…") adds under another`,
 	"NewFrame": `mem.Todo("what to get done") adds a todo under the one you are in, and names it for you; .Push() enters it`,

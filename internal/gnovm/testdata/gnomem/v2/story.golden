@@ -21,7 +21,7 @@ error: names are lowercase, typed as printed: `release-v2/tag`
 > s1: mem.Done("2", "tagged")
 error: `2` is not a name; todos are named under the one they are in, like `fix-flaky/find-cause`: mem.Show() lists them
 > s1: mem.Todo("Release v2")
-error: `release-v2` "release v2" (this session, 3m ago, 1/3 done) is already open: enter it with mem.Push("release-v2") and add to it with mem.Todo("…"), or give other work a task that tells them apart
+error: `release-v2` "release v2" (this session, 3m ago, 1/3 done) is already open: step into it with mem.Frame("release-v2").Push() and add to it with mem.Todo("…"), or give other work a task that tells them apart
 > s1: mem.Todo("renew the TLS cert").Wait("Dec 1")
 added `renew-tls-cert` "renew the TLS cert"
 error: write a day as 2026-12-01 (today is Thu 2026-10-29); nothing was kept, so `renew-tls-cert`, added above, is not in mem
@@ -34,7 +34,7 @@ added `bump-gno-pin` "bump the gno pin"
 > s2: mem.Start("release-v2/tag")
 started `release-v2/tag` "tag it"
 > s1: println(mem.Next("release-v2"))
-release-v2/ci-green
+error: mem.Next takes 0 arguments, not 1: mem.Next()
 > s1: println(mem.Show())
 mem: 3 todos open
 todos:

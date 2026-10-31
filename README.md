@@ -87,6 +87,19 @@ Nothing is deleted: you still see all of it, the transcript keeps it, and
 nothing the agent did is undone. Only the model's context shrinks, the way a
 stack frame goes when a function returns and only its value comes back.
 
+Line by line, where the agent stands (its stack, bottom to top) and what
+mem holds; a todo is made under the frame you stand in, and `mem.Next()`
+steps into the next open todo under it:
+
+```go
+mem.Todo("rename the project").Push()   // stack: rename-project · tree: rename-project
+mem.Todo("rename it in the code")       // stack: rename-project · tree: rename-project › rename-code
+mem.Todo("rename it in the tests")      // stack: rename-project · tree: rename-project › rename-code, rename-tests
+mem.Next()                              // stack: rename-project › rename-code
+mem.Pop("go.mod and main.go say gnosh") // stack: rename-project · rename-code is done; its work leaves the context
+mem.Next()                              // stack: rename-project › rename-tests
+```
+
 So a long task runs with the context holding the plan, the results so far and
 the present todo's work, however many todos there are. Compaction stops being
 how a long task survives and becomes a backstop. In the model server's log of
@@ -100,12 +113,12 @@ as it happened; the replayed calls are under
 [what the agent runs](#what-the-agent-runs)):
 
 ```go
-mem.Push("klash-to-gnosh-rename/gnosh-readme-rename")
+mem.Frame("klash-to-gnosh-rename/gnosh-readme-rename").Push()
 // in `klash-to-gnosh-rename/gnosh-readme-rename` "rename klash to gnosh in README.md": when it is done, pop it with what came of it and what the next todo needs. …
 // … the README read, edited and searched; then
 mem.Pop("README.md fully renamed klash→gnosh (title, prose, build/usage snippet, config file mentions incl. gnosh.toml and gnosh.example.toml); case-insensitive grep for klash finds nothing")
 // done `klash-to-gnosh-rename/gnosh-readme-rename` "rename klash to gnosh in README.md" → README.md fully renamed klash→gnosh (title, prose, build/usage snippet, config file mentions incl. gnosh.toml and gnosh.example.toml); case-insensitive grep for klash finds nothing
-// next: `klash-to-gnosh-rename/gnosh-build-output-rename` "rename the build output klash to gnosh in the Makefile": mem.Push("klash-to-gnosh-rename/gnosh-build-output-rename")
+// next: `klash-to-gnosh-rename/gnosh-build-output-rename` "rename the build output klash to gnosh in the Makefile": mem.Frame("klash-to-gnosh-rename/gnosh-build-output-rename").Push()
 // Everything since you entered `klash-to-gnosh-rename/gnosh-readme-rename` was removed from your context: this result stays; the user still sees all of it. In it you edited README.md. Your reads inside it are forgotten: view a file before you edit it.
 ```
 
@@ -222,13 +235,13 @@ r.Todo("verify that nothing says klash and the tests pass")
 // added `rename-project-klash-gnosh/rename-tests` "rename it in the tests"
 // added `rename-project-klash-gnosh/rename-readme-config-example` "rename it in the README and the config example"
 // added `rename-project-klash-gnosh/verify-nothing-says-klash` "verify that nothing says klash and the tests pass"
-mem.Push("rename-project-klash-gnosh")
-mem.Push()
+mem.Frame("rename-project-klash-gnosh").Push()
+mem.Next()
 // in `rename-project-klash-gnosh` "rename the project from klash to gnosh": when it is done, pop it with what came of it and what the next todo needs. Everything from here until the pop is removed from your context then, what you were told included; what matters after, keep as a thought first. Your result stays, and nothing you did is undone.
 // in `rename-project-klash-gnosh/rename-code-makefile` "rename it in the code and the Makefile": when it is done, pop it with what came of it and what the next todo needs. …
 mem.Pop("go.mod, main.go and the Makefile say gnosh; the tests still expect klash")
 // done `rename-project-klash-gnosh/rename-code-makefile` "rename it in the code and the Makefile" → go.mod, main.go and the Makefile say gnosh; the tests still expect klash
-// next: `rename-project-klash-gnosh/rename-tests` "rename it in the tests": mem.Push()
+// next: `rename-project-klash-gnosh/rename-tests` "rename it in the tests": mem.Next()
 mem.Show()
 // mem: 1 todo open
 // todos:
@@ -237,20 +250,20 @@ mem.Show()
 //     [ ] `rename-project-klash-gnosh/rename-tests` "rename it in the tests"  ← next
 //     [ ] `rename-project-klash-gnosh/rename-readme-config-example` "rename it in the README and the config example"
 //     [ ] `rename-project-klash-gnosh/verify-nothing-says-klash` "verify that nothing says klash and the tests pass"
-mem.Push()
+mem.Next()
 // in `rename-project-klash-gnosh/rename-tests` "rename it in the tests": when it is done, pop it with what came of it and what the next todo needs. …
 mem.Pop("main_test.go expects gnosh in the usage line and the greeting")
-mem.Push()
+mem.Next()
 // done `rename-project-klash-gnosh/rename-tests` "rename it in the tests" → main_test.go expects gnosh in the usage line and the greeting
 // in `rename-project-klash-gnosh/rename-readme-config-example` "rename it in the README and the config example": when it is done, pop it with what came of it and what the next todo needs. …
 mem.Pop("README says gnosh; klash.example.toml is now gnosh.example.toml")
-mem.Push()
+mem.Next()
 // done `rename-project-klash-gnosh/rename-readme-config-example` "rename it in the README and the config example" → README says gnosh; klash.example.toml is now gnosh.example.toml
 // in `rename-project-klash-gnosh/verify-nothing-says-klash` "verify that nothing says klash and the tests pass": when it is done, pop it with what came of it and what the next todo needs. …
 mem.Pop("grep finds no klash; go test ./... → ok gnosh 0.004s")
-mem.Push()
+mem.Next()
 // done `rename-project-klash-gnosh/verify-nothing-says-klash` "verify that nothing says klash and the tests pass" → grep finds no klash; go test ./... → ok gnosh 0.004s
-// nothing to push: `rename-project-klash-gnosh` has no open todo: pop it with its result.
+// no next todo: `rename-project-klash-gnosh` has no open todo: pop it with its result.
 mem.Pop("klash is gnosh everywhere: code, Makefile, tests, README, config; go test ./... → ok")
 // done `rename-project-klash-gnosh` "rename the project from klash to gnosh" → klash is gnosh everywhere: code, Makefile, tests, README, config; go test ./... → ok
 ```

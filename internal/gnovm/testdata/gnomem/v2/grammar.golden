@@ -61,7 +61,7 @@ rule `style/emoji` is new; every session will be given it
 > s1: mem.Todo("Ship It")
 added `ship` "Ship It"
 > s1: mem.Todo("ship it!")
-error: `ship` "Ship It" (this session, 1m ago) is already open: enter it with mem.Push("ship") and add to it with mem.Todo("…"), or give other work a task that tells them apart
+error: `ship` "Ship It" (this session, 1m ago) is already open: step into it with mem.Frame("ship").Push() and add to it with mem.Todo("…"), or give other work a task that tells them apart
 > s1: mem.Todo("ship/it")
 added `ship-2` "ship/it"
 > s1: mem.Todo("ship-it")

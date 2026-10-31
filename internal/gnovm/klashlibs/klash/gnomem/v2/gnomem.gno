@@ -17,7 +17,7 @@
 //	mem.Todo("bump the version")
 //	mem.Todo("tag v2.0.0")
 //	mem.Todo("CI is green")
-//	mem.Push()
+//	mem.Next()
 //	mem.Think("the version lives in version.go")
 //	mem.Pop("now 2.0.0")
 //	mem.Ask("release-v2/tag-v2-0-0", "which key signs the tag?")

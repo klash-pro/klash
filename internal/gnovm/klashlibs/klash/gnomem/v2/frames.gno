@@ -113,7 +113,7 @@ func (f Fact) String() string { return "fact `" + f.name + "` = " + f.Body + "\n
 // Frame is the present frame: the top of this session's stack, or, with
 // the stack empty, the root: the goal the user's /goal bound the session
 // to, or everything open. Given an id, it is that frame:
-// mem.Push("fix-flaky") enters a todo by id.
+// mem.Frame("fix-flaky").Push() steps into a todo by id.
 func (m *Mem) Frame(id ...string) *Frame {
 	switch {
 	case len(id) > 1:
@@ -333,30 +333,54 @@ func (m *Mem) addStep(parent, id, title string) {
 	m.do(Op{Kind: "add", Name: id, New: title, By: caller()})
 }
 
-// Push enters a frame: it becomes this session's, the top of its stack,
-// and from here the context will be cut when it is popped. With no id it
-// enters the present frame's next todo, Frame().NextTodo(), and when there
-// is none it is a kept no-op that says what to do instead; with an id it
-// enters that frame. A Frame and a Thought have Push too:
-// mem.Todo("…").Push(), mem.Thought("port").Push().
-func (m *Mem) Push(id ...string) {
-	switch {
-	case len(id) > 1:
-		panic("Push takes one id, or none for the next todo")
-	case len(id) == 1:
-		m.push(id[0], "")
+// Next steps into the next todo, which becomes this session's, the top of
+// its stack, and from where the context will be cut when it is popped:
+// under the frame you stand in, the first open todo (or one this session
+// is doing), as Frame().NextTodo() gives it; at the unbound root, the next
+// free todo of the newest open task, so a session taking up another's work
+// needs no name. When there is none it is a kept no-op that says what to do
+// instead. A particular frame is entered with .Push() on it:
+// mem.Todo("…").Push(), mem.Frame(id).Push(), mem.Thought("port").Push().
+func (m *Mem) Next() {
+	p := m.present()
+	if p == "" {
+		if n := m.nextAtRoot(); n != "" {
+			m.push(n, "")
+			return
+		}
+	} else if f := m.nextTodo(p); f != nil {
+		m.push(f.Id, "")
 		return
 	}
-	f := m.nextTodo(m.present())
-	if f == nil {
-		pushed("", "")
-		println(m.nothingToPush())
-		return
-	}
-	m.push(f.Id, "")
+	pushed("", "")
+	println(m.nothingNext())
 }
 
-// Push enters the frame, as mem.Push(f.Id) does.
+// nextAtRoot is the todo Next steps into from the unbound root: the first
+// todo this session can do now under the newest open task, in outline
+// order, or that task itself when it is free and has no open todo; "" when
+// there is none.
+func (m *Mem) nextAtRoot() string {
+	newest := ""
+	m.open.ReverseIterate("", "", func(_ string, v any) bool {
+		newest = v.(string)
+		return true
+	})
+	if newest == "" {
+		return ""
+	}
+	g := m.get(newest)
+	if n := m.next(newest, caller()); n != "" {
+		return n
+	}
+	if g.OpenSteps == 0 && m.free(g, caller()) {
+		return newest
+	}
+	return ""
+}
+
+// Push steps into the frame: it becomes this session's, the top of its
+// stack, and from here the context will be cut when it is popped.
 func (f *Frame) Push() {
 	if f == nil || f.m == nil {
 		panic("no frame to push: mem.Frame(id) or mem.Todo(task) gives one")
@@ -407,9 +431,9 @@ func pushText(id, title, thought string) string {
 		"what matters after, keep as a thought first. Your result stays, and nothing you did is undone."
 }
 
-// nothingToPush is what Push() with nothing to enter says: what there is to do instead,
-// where the model stands.
-func (m *Mem) nothingToPush() string {
+// nothingNext is what Next() with nothing to step into says: what there is
+// to do instead, where the model stands.
+func (m *Mem) nothingNext() string {
 	p := m.present()
 	if p == "" {
 		newest := ""
@@ -417,29 +441,31 @@ func (m *Mem) nothingToPush() string {
 			newest = v.(string)
 			return true
 		})
-		if newest != "" {
-			g := m.get(newest)
-			if g.Doing != "" && g.Doing != caller() {
-				// A todo another session holds, ended or not, is not entered;
-				// its free todos are, by id.
-				msg := "nothing to push at the root: " + ref(newest, g.Title) + " is held by " + who(g.Doing)
-				if nt := m.nextTodo(newest); nt != nil {
-					return msg + "; its todo " + ref(nt.Id, nt.Purpose) + " is free: mem.Push(" + quote(nt.Id) + ") enters it; or make a todo: mem.Todo(\"…\").Push()."
-				}
-				return msg + ", and nothing in it can be done now: make a todo, mem.Todo(\"…\").Push()."
-			}
-			return "nothing to push at the root: " + ref(newest, g.Title) + " is open: mem.Push(" + quote(newest) + ") enters it; or make a todo: mem.Todo(\"…\").Push()."
+		if newest == "" {
+			return "no next todo: nothing is open: make a todo, mem.Todo(\"…\").Push()."
 		}
-		return "nothing to push at the root: nothing is open: make a todo, mem.Todo(\"…\").Push()."
+		g := m.get(newest)
+		msg := "no next todo: " + ref(newest, g.Title)
+		switch {
+		case g.OpenSteps > 0:
+			msg += ": nothing in it can be done now: " + m.holdsOf(newest)
+		case g.Doing != "" && g.Doing != caller():
+			msg += " has no open todo and is held by " + who(g.Doing) + ", which pops it with its result"
+		case m.waiting(g):
+			msg += " has no open todo and" + waitText(g.Wait)
+		default:
+			msg += " has no open todo"
+		}
+		return msg + "; or make a todo, mem.Todo(\"…\").Push()."
 	}
 	it := m.get(p)
 	if it.OpenSteps > 0 {
-		return "nothing to push: nothing in `" + p + "` can be done now: " + m.holdsOf(p) + "."
+		return "no next todo: nothing in `" + p + "` can be done now: " + m.holdsOf(p) + "."
 	}
 	if len(frames()) == 0 {
-		return "nothing to push: `" + p + "` is this session's /goal and has no open todo: mem.Todo(\"…\") to plan more, or mem.Done when it holds."
+		return "no next todo: `" + p + "` is this session's /goal and has no open todo: mem.Todo(\"…\") to plan more, or mem.Done when it holds."
 	}
-	return "nothing to push: `" + p + "` has no open todo: pop it with its result."
+	return "no next todo: `" + p + "` has no open todo: pop it with its result."
 }
 
 // holdsOf says what holds back each open todo of frame id that NextTodo
@@ -466,7 +492,7 @@ func (m *Mem) holdsOf(id string) string {
 func (m *Mem) heldText(id string, it *Todo) string {
 	msg := "`" + id + "` is held by " + who(it.Doing) + ": only it can pop, close or drop it (resume that session if it has ended)"
 	if nt := m.nextTodo(id); nt != nil {
-		msg += "; its todo " + ref(nt.Id, nt.Purpose) + " is free: mem.Push(" + quote(nt.Id) + ") enters it"
+		msg += "; its todo " + ref(nt.Id, nt.Purpose) + " is free: mem.Frame(" + quote(nt.Id) + ").Push() steps into it"
 	}
 	return msg
 }
@@ -630,10 +656,10 @@ func (m *Mem) NextHint(id string) string {
 	}
 	present := m.present()
 	if nt := m.nextTodo(parent); nt != nil {
-		if parent == present {
-			return "next: " + ref(nt.Id, nt.Purpose) + ": mem.Push()"
+		if parent == present || present == "" && m.nextAtRoot() == nt.Id {
+			return "next: " + ref(nt.Id, nt.Purpose) + ": mem.Next()"
 		}
-		return "next: " + ref(nt.Id, nt.Purpose) + ": mem.Push(" + quote(nt.Id) + ")"
+		return "next: " + ref(nt.Id, nt.Purpose) + ": mem.Frame(" + quote(nt.Id) + ").Push()"
 	}
 	switch {
 	case p.OpenSteps > 0:

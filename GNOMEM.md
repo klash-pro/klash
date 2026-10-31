@@ -19,12 +19,12 @@ r.Todo("CI is green")
 // added `release-v2/bump-version` "bump the version"
 // added `release-v2/tag-release` "tag the release"
 // added `release-v2/ci-green` "CI is green"
-mem.Push("release-v2")
-mem.Push()
+mem.Frame("release-v2").Push()
+mem.Next()
 // in `release-v2` "release v2": when it is done, pop it with what came of it and what the next todo needs. Everything from here until the pop is removed from your context then, what you were told included; what matters after, keep as a thought first. Your result stays, and nothing you did is undone.
 // in `release-v2/bump-version` "bump the version": when it is done, pop it with what came of it and what the next todo needs. …
 mem.Pop("now 2.0.0")
-mem.Push()
+mem.Next()
 // done `release-v2/bump-version` "bump the version" → now 2.0.0
 // in `release-v2/tag-release` "tag the release": when it is done, pop it with what came of it and what the next todo needs. …
 mem.Show()
@@ -87,13 +87,13 @@ r.Todo("make test runs the tests")
 // added `build-greet/hello-greet-go` "Hello in greet.go"
 // added `build-greet/test-hello` "a test for Hello"
 // added `build-greet/make-test-runs-tests` "make test runs the tests"
-mem.Push("build-greet")
-mem.Push()
+mem.Frame("build-greet").Push()
+mem.Next()
 // in `build-greet` "build greet": when it is done, pop it with what came of it and what the next todo needs. Everything from here until the pop is removed from your context then, what you were told included; what matters after, keep as a thought first. Your result stays, and nothing you did is undone.
 // in `build-greet/go-mod` "go.mod": when it is done, pop it with what came of it and what the next todo needs. …
 mem.Pop("module greet, go 1.22")
 // done `build-greet/go-mod` "go.mod" → module greet, go 1.22
-// next: `build-greet/hello-greet-go` "Hello in greet.go": mem.Push()
+// next: `build-greet/hello-greet-go` "Hello in greet.go": mem.Next()
 mem.Note("build-greet/make-test-runs-tests", "make is not installed here")
 mem.Drop("build-greet/make-test-runs-tests", "no make on this machine")
 mem.Todo("test.sh runs the tests")
@@ -150,11 +150,24 @@ however long the task runs, and compaction becomes a backstop: no more
 compactions to get a long task through, since a todo's work leaves the
 context as the todo finishes.
 
+Line by line, where the agent stands (its stack, bottom to top) and what
+mem holds; a todo is made under the frame you stand in, and `mem.Next()`
+steps into the next open todo under it:
+
+```go
+mem.Todo("rename the project").Push()   // stack: rename-project · tree: rename-project
+mem.Todo("rename it in the code")       // stack: rename-project · tree: rename-project › rename-code
+mem.Todo("rename it in the tests")      // stack: rename-project · tree: rename-project › rename-code, rename-tests
+mem.Next()                              // stack: rename-project › rename-code
+mem.Pop("go.mod and main.go say gnosh") // stack: rename-project · rename-code is done; its work leaves the context
+mem.Next()                              // stack: rename-project › rename-tests
+```
+
 ```go mem
 mem.Todo("fix the flaky test").Push()
 mem.Todo("find why TestFlaky fails")
 mem.Todo("rerun the suite 20 times")
-mem.Push()
+mem.Next()
 // added `fix-flaky-test` "fix the flaky test"
 // in `fix-flaky-test` "fix the flaky test": when it is done, pop it with what came of it and what the next todo needs. Everything from here until the pop is removed from your context then, what you were told included; what matters after, keep as a thought first. Your result stays, and nothing you did is undone.
 // added `fix-flaky-test/find-why-testflaky-fails` "find why TestFlaky fails"
@@ -163,7 +176,7 @@ mem.Push()
 mem.Think("the shared port is 8080")
 // thought `shared-port-8080` kept on `fix-flaky-test/find-why-testflaky-fails`
 mem.Pop("TestFlaky races on the shared port; fixed by picking a free port in setup (internal/net/listen_test.go:41)")
-mem.Push()
+mem.Next()
 // done `fix-flaky-test/find-why-testflaky-fails` "find why TestFlaky fails" → TestFlaky races on the shared port; fixed by picking a free port in setup (internal/net/listen_test.go:41)
 // in `fix-flaky-test/rerun-suite-20-times` "rerun the suite 20 times": when it is done, pop it with what came of it and what the next todo needs. …
 mem.Thought("shared-port-8080")
@@ -600,7 +613,7 @@ Gnosh's system prompt carries a short recipe, so the model needs no setup:
   the facts beside it.
 - **A task of two or more steps**: `mem.Todo("…").Push()` adds a todo and
   enters it, `mem.Todo("…")` for each part adds the work under it, named for
-  the agent, and then those todos as frames: `mem.Push()` enters the first,
+  the agent, and then those todos as frames: `mem.Next()` enters the first,
   and `mem.Pop("what came of it")` with the next push on the next line
   moves on; a pop removes the todo's work from the model's context and keeps
   the result. A todo cannot be done while one under it is open, so a success
@@ -661,7 +674,7 @@ func (f *Frame) Ask(question string) *Frame // a question for you, as a todo und
 func (f *Frame) Push()                      // enter it: from here the context will be cut
 func (f *Frame) NextTodo() *Frame           // the first todo under it to do; nil for none
 func (m *Mem) Frame(id ...string) *Frame    // the present frame, or one by id
-func (m *Mem) Push(id ...string)            // enter the present frame's next todo, or the frame with that id
+func (m *Mem) Next()                        // step into the next open todo under the present frame; at the root, of the newest open task
 func (m *Mem) Pop(result string)            // leave it done: everything since the push is removed
 func (m *Mem) Think(args ...string) Thought // Think(text): a thought on the present frame, named for the agent; or Think(name, text)
 func (m *Mem) Thought(name string) Thought  // a thought by name, from anywhere
@@ -680,7 +693,6 @@ func (m *Mem) Forget(name string)
 func (m *Mem) Redact(secret string)
 func (m *Mem) Find(words string) string
 func (m *Mem) Show(names ...string) string
-func (m *Mem) Next(name string) string
 ```
 
 - **Names, not numbers.** Everything has a lowercase name, printed in
