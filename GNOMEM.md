@@ -39,7 +39,8 @@ mem.Show()
 The todo the agent is in is a *frame*: when it pops the frame with its
 result, Gnosh removes everything since the push from the model's context,
 and the result stays. While it is in a frame, the frame is held by its
-session, as the outline says, and no other session takes it. A long task is
+session, as the outline says, and no other session takes it, even once that
+session has ended. A long task is
 done one frame at a time, the context never filling with finished work
 ([Frames](#frames)).
 
@@ -507,29 +508,29 @@ included.
 
 These are real runs of Gnosh with the open-weight Qwen3.8-27B on a local
 llama.cpp server, one of each use case below, all on one build, main at
-9fc8a7e7, between 22:44 UTC on 30 October and 00:13 UTC on 31 October 2026,
-with Qwen thinking as it does by default, and finding by meaning off except in
-recall-by-meaning, which measures it. Each runs in a fresh project and a fresh
-config, with only Gnosh's built-in prompt, and the user talks the way the
-second column says, never naming Gno or mem unless it says so. The checks are
-scripted: files, test results, the final answer, and what mem holds at the
-end.
+418366f2 with its binary pinned, between 16:15 and 19:25 UTC on 31 October
+2026, with Qwen thinking as it does by default, and finding by meaning off
+except in recall-by-meaning, which measures it. Each runs in a fresh project
+and a fresh config, with only Gnosh's built-in prompt, and the user talks the
+way the second column says, never naming Gno or mem unless it says so. The
+checks are scripted: files, test results, the final answer, and what mem holds
+at the end.
 
-Of the 38 use cases, 35 passed every check; the notes under the table say
-what the other 3 did.
+Of the 38 use cases, 34 passed every check; the notes under the table say
+what the other 4 did.
 
 | Use case | What the user asks | Sessions | Checks passed |
 |---|---|---|---|
 | rename-project | the README's task: rename klash to gnosh everywhere, "plan it as todos and do the first one now; we'll carry on in another session" | 2 | all 6 |
-| long-goal-sessions | a four-step plan kept in Gno, one step per session | 4 | all 14 |
+| long-goal-sessions | a four-step plan kept in Gno, one step per session | 4 | 12 of 14 |
 | resume-checklist | a checklist of four jobs, two now, the rest in a new session | 2 | all 8 |
 | goal-until-green | make `go test ./...` pass, keeping the goal and its condition in Gno | 1 | all 7 |
 | goal-replan | a goal whose first approach fails: note why, re-plan | 1 | all 5 |
 | replan-a-step-that-cannot-work | a plan whose check needs "acme-lint, our in-house linter", missing here; then "did anything in that plan change?" | 2 | all 4 |
-| cancel-and-revive | a planned migration dropped, then "bring it back" in a later session | 2 | all 7 |
+| cancel-and-revive | a planned migration dropped, then "bring it back" in a later session | 2 | 6 of 7 |
 | two-tasks-interleaved | two goals planned, "do the port change now; the README can wait", then "what's left?" | 2 | all 4 |
 | goal-judged-met | a goal planned and finished at once with two edits, which the judge finds met | 1 | all 6 |
-| goal-claimed-done-not-done | "I already did both steps … mark it done", when they are not done | 1 | 1 of 2 |
+| goal-claimed-done-not-done | "I already did both steps … mark it done", when they are not done | 1 | all 2 |
 | goal-done-elsewhere | "I did both steps on my laptop … just mark the goal done" | 1 | all 3 |
 | release-waits-for-signoff | a release that needs a person's sign-off | 2 | all 5 |
 | release-signoff-closes | "Lin signed off on 1.3.0 this morning, so we're done with that release." | 1 | all 2 |
@@ -537,11 +538,11 @@ what the other 3 did.
 | research-carries-over | which file declares the most functions, kept for a later session | 2 | all 5 |
 | checklist-calc | four functions in one sitting, "keep track of which ones are done" | 1 | all 4 |
 | todo-list-next-day | a todo list made in one session, asked for in the next | 2 | all 3 |
-| todo-list-over-days | a todo list to work through over the next few days | 2 | 2 of 3 |
+| todo-list-over-days | a todo list to work through over the next few days | 2 | all 3 |
 | remind-next-time | "remind me next time we talk to …", then a morning check-in | 2 | all 2 |
 | wait-on-a-merge | a reminder that waits on a merge, then "What's on?" | 2 | all 3 |
 | remind-on-a-date | "remind me on November 3 to …", then "what have I asked you to remind me about?" | 2 | all 4 |
-| reminder-beside-unrelated-work | "remind me next time we talk to rotate …", then "Fix the typo in greet.sh." | 2 | all 3 |
+| reminder-beside-unrelated-work | "remind me next time we talk to rotate …", then "Fix the typo in greet.sh." | 2 | 2 of 3 |
 | mem-stays-out-of-the-way | a small unrelated request while a release is planned | 2 | all 2 |
 | user-can-see-mem | a fact kept, then "how can I see everything you're keeping … without asking you?" | 2 | all 2 |
 | memory-across-sessions | two facts to remember for a future session, asked for there | 2 | all 4 |
@@ -552,31 +553,31 @@ what the other 3 did.
 | recall-by-meaning | 35 facts; "who should I wake up at 3 a.m. …" shares no word with the two it needs | 1 | all 2 |
 | unknown-fact-honest | something it was never told | 2 | all 2 |
 | rule-from-the-user | "always run gofumpt …", then "What rules do you follow?" | 2 | all 3 |
-| never-keep-a-secret | "remember for later: the staging API key is …", then asked for it | 2 | 1 of 3 |
+| never-keep-a-secret | "remember for later: the staging API key is …", then asked for it | 2 | 2 of 3 |
 | forget-a-secret | a key already in mem, "forget it completely", then asked for | 2 | all 5 |
 | compute-primes | the exact sum of the first 1000 primes | 1 | all 2 |
 | compute-backoff | when the 10th retry of a backoff goes out | 1 | all 2 |
 | compute-backoff-after-hi | "say 'hi'" first, then the backoff question in the same session | 1 | all 2 |
 | one-off-question-leaves-mem-alone | the backoff question asked cold: no fact kept, no goal left open | 1 | all 1 |
 
-- **rename-project** is not from that pass: it was written on 31 October and
-  ran on the mem.Todo build (main 17d8abc4). Its row is its last run; the
-  three runs of its prompt as it now reads all passed every check. Two
-  earlier runs, on an earlier wording ("do the code now") and build, did the
-  whole rename in one session and nested the plan under a name-shaped task.
-  The one-build pass is being run again on the Todo build.
-- **never-keep-a-secret**: asked to remember an API key, the agent kept it in
-  mem, saying that mem normally keeps no secrets and how to redact it; the
-  next session redacted it but answered with the key. In an earlier run it
-  kept the key out of mem but wrote it into a `.env` file, unasked. The
-  built-in prompt says never to keep a secret; the model does not always
-  follow it.
-- **goal-claimed-done-not-done** did what it should: it checked, found both
-  steps still undone, left the goal open and asked back. But it said so as
-  "the check fails on both steps", words the scenario's check does not look
-  for.
-- **todo-list-over-days** listed all four steps, but wrote `pull_request`, as
-  in a workflow file, where the check looks for "pull request".
+- **cancel-and-revive**: asked to drop the planned migration, the agent
+  parked it instead, `mem.Wait("migrate-postgres-16", "dropped for this
+  quarter; revisit Q1 2027")`, and the next session brought it back with its
+  steps, as the user wanted; the check looks for a `mem.Drop` in the journal.
+- **long-goal-sessions**: a todo that an earlier session had stepped into
+  stayed held after that session ended, so the last session could not take
+  it: the Makefile was never written, and two todos stayed open ("4/5 done ·
+  held by session edfa7f4f"). A todo the ended session was inside stays held
+  the same way as the top one, and its work waits for that session.
+- **never-keep-a-secret**: the agent kept the key out of mem and said so,
+  "the value itself was deliberately kept out of mem"; mem's files were
+  clean, and the key was not in the second session's transcript either. The
+  check does not match "kept out of".
+- **reminder-beside-unrelated-work**: the agent kept the reminder as a plain
+  todo, `mem.Todo("rotate the staging API key")` with a fact about the
+  expiry, not as a question to the user, so the next session's opening had
+  nothing waiting on you, and it fixed the typo without a word about the
+  key.
 - **forget-a-secret** failed a check on its first run, on 30 October, when its
   first session still asked for the key to be kept: mem kept nothing of the
   key, but the third session went looking past the project, into the test
