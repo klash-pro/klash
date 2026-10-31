@@ -281,7 +281,7 @@ type SessionAgent interface {
 	Model() Model
 	GenerateTitle(ctx context.Context, sessionID, userPrompt string)
 	GenerateSessionName(ctx context.Context, sessionID string) (string, error)
-	NameFor(ctx context.Context, sessionID, text string) (string, error)
+	NamesFor(ctx context.Context, sessionID string, texts []string) (map[string]string, error)
 }
 
 type Model struct {
@@ -3165,28 +3165,82 @@ func (a *sessionAgent) generateTitle(ctx context.Context, sessionID, userPrompt,
 // the provider has a switch, and maxTokens for the answer (a reasoning
 // model's whole default instead, as it may think anyway). what names it
 // in the log.
-// NameFor is the name the small model gives a text the agent keeps in mem
-// without naming it: lowercase words joined by dashes, at most four and 32
-// bytes, as mem names things; "" with an error when the model gave none.
-func (a *sessionAgent) NameFor(ctx context.Context, sessionID, text string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+// NamesFor is the names the small model gives the texts one call keeps in
+// mem without naming them: lowercase words joined by dashes, at most four
+// and 32 bytes, as mem names things, by text. Several texts are named in
+// one ask, so the names tell them apart ("the tests", "the README" of one
+// rename rather than the rename twice); one text is asked for alone. A text
+// the model gave no name for is left out, and mem names it from its words.
+func (a *sessionAgent) NamesFor(ctx context.Context, sessionID string, texts []string) (map[string]string, error) {
+	if len(texts) == 0 {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second+10*time.Second*time.Duration(len(texts)))
 	defer cancel()
-	prompt := fmt.Sprintf("Name this note in two to four lowercase words joined by dashes, like port-env or staging-db; answer with the name alone:\n\n%s\n <think>\n\n</think>", text)
-	resp, _, err := a.askForName(ctx, sessionID, "name", namePrompt, prompt, 24)
+	if len(texts) == 1 {
+		prompt := fmt.Sprintf("Name this note in two to four lowercase words joined by dashes, like port-env or staging-db; answer with the name alone:\n\n%s\n <think>\n\n</think>", texts[0])
+		resp, _, err := a.askForName(ctx, sessionID, "name", namePrompt, prompt, 24)
+		if err != nil {
+			return nil, err
+		}
+		name := memName(thinkless(resp.Response.Content.Text()))
+		if name == "" {
+			return nil, errors.New("the small model answered with nothing that is a name")
+		}
+		return map[string]string{texts[0]: name}, nil
+	}
+	var lines []string
+	for _, t := range texts {
+		lines = append(lines, strings.Join(strings.Fields(t), " "))
+	}
+	prompt := fmt.Sprintf("Name each of these, one name per line in the same order, two to four lowercase words joined by dashes each; the names must differ, so use the words that set each one apart:\n\n%s\n <think>\n\n</think>", strings.Join(lines, "\n"))
+	resp, _, err := a.askForName(ctx, sessionID, "names", namesPrompt, prompt, int64(16*len(texts)+8))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	answer := thinkTagRegex.ReplaceAllString(resp.Response.Content.Text(), "")
-	answer = orphanThinkTagRegex.ReplaceAllString(answer, "")
-	name := memName(answer)
-	if name == "" {
-		return "", errors.New("the small model answered with nothing that is a name")
+	names := memNames(thinkless(resp.Response.Content.Text()), len(texts))
+	if names == nil {
+		return nil, fmt.Errorf("the small model answered with other than %d names", len(texts))
 	}
-	return name, nil
+	out := map[string]string{}
+	for i, t := range texts {
+		if names[i] != "" {
+			out[t] = names[i]
+		}
+	}
+	return out, nil
 }
 
-// namePrompt is the system prompt for a name.
-var namePrompt = []byte("You name short notes and tasks for an index. Answer with the name only: two to four lowercase words joined by dashes, no quotes, no punctuation, no explanation.")
+// thinkless is a small model's answer without its thinking tags.
+func thinkless(answer string) string {
+	return orphanThinkTagRegex.ReplaceAllString(thinkTagRegex.ReplaceAllString(answer, ""), "")
+}
+
+// memNames is answer as n mem names, one per line in order (a line that is
+// no name gives ""); nil when the answer has not n lines with a name.
+func memNames(answer string, n int) []string {
+	var out []string
+	for _, line := range strings.Split(strings.TrimSpace(answer), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// A numbered or bulleted line names all the same.
+		line = strings.TrimLeft(line, "-*•0123456789.) ")
+		out = append(out, memName(line))
+	}
+	if len(out) != n {
+		return nil
+	}
+	return out
+}
+
+// namePrompt is the system prompt for a name, and namesPrompt for several
+// at once, which must tell their texts apart.
+var (
+	namePrompt  = []byte("You name short notes and tasks for an index. Answer with the name only: two to four lowercase words joined by dashes, no quotes, no punctuation, no explanation.")
+	namesPrompt = []byte("You name tasks and notes for an index. You are given several at once, one per line. Answer with one name per line, in the same order, nothing else: each two to four lowercase words joined by dashes, no quotes, no punctuation. The names must differ from each other, so use the words that set each one apart; leave out what they all share.")
+)
 
 // memName is answer as a mem name: lowercase words of letters and digits
 // joined by dashes, at most four words and 32 bytes, from the first line;

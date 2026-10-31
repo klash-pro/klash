@@ -2058,20 +2058,19 @@ func (c *coordinator) ContextUsage(ctx context.Context, sessionID string) (Conte
 	}), nil
 }
 
-// nameFor is the name the small model gives a text the agent keeps in mem
-// without naming it (gnovmtools.Namer); "" when there is no agent or no
-// answer, and mem names it from the words.
-func (c *coordinator) nameFor(ctx context.Context, sessionID, text string) string {
+// nameFor is the names the small model gives the texts one call keeps in
+// mem without naming them (gnovmtools.Namer); nil when there is no agent or
+// no answer, and mem names them from their words.
+func (c *coordinator) nameFor(ctx context.Context, sessionID string, texts []string) map[string]string {
 	agent := c.currentAgent()
 	if agent == nil {
-		return ""
+		return nil
 	}
-	name, err := agent.NameFor(ctx, sessionID, text)
+	names, err := agent.NamesFor(ctx, sessionID, texts)
 	if err != nil {
-		slog.Debug("No name from the small model; mem names it from the words", "error", err)
-		return ""
+		slog.Debug("No names from the small model; mem names them from the words", "error", err)
 	}
-	return name
+	return names
 }
 
 // GenerateTitle generates a session title using the current agent.

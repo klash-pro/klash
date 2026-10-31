@@ -261,3 +261,12 @@ func TestMemName(t *testing.T) {
 		require.Equal(t, want, memName(answer), "%q", answer)
 	}
 }
+
+func TestMemNames(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, []string{"code", "tests", "readme-and-docs"}, memNames("code\ntests\nREADME and docs\n", 3))
+	require.Equal(t, []string{"code", "tests"}, memNames("1. code\n2. tests", 2), "numbered lines name all the same")
+	require.Equal(t, []string{"code", ""}, memNames("code\n---", 2), "a line that is no name gives none")
+	require.Nil(t, memNames("code\ntests", 3), "too few lines is no answer")
+	require.Nil(t, memNames("code tests readme", 3), "one line for three is no answer")
+}

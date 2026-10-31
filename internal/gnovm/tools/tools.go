@@ -109,10 +109,11 @@ type RunResponseMetadata struct {
 	Frames []gnovm.MemFrame `json:"frames,omitempty"`
 }
 
-// NamerFunc names a text the agent keeps in mem without naming it
-// (mem.Think(text), mem.Fact(text)): a short lowercase dashed name, or ""
-// when it has none, when mem names it from the text's words.
-type NamerFunc func(ctx context.Context, sessionID, text string) string
+// NamerFunc names the texts one call keeps in mem without naming them
+// (mem.Todo(task), mem.Think(text), mem.Fact(text)), all at once so the
+// names tell them apart: text → a short lowercase dashed name; a text left
+// out is named by mem from its words.
+type NamerFunc func(ctx context.Context, sessionID string, texts []string) map[string]string
 
 // RunOption sets up gnovm_run.
 type RunOption func(*runOptions)
@@ -127,8 +128,8 @@ type runOptions struct {
 	onRules  func(ctx context.Context, sessionID string, rules []gnovm.MemRule)
 }
 
-// Namer has gnovm_run ask f, before a call to mem, for a name for each text
-// the call keeps without naming it.
+// Namer has gnovm_run ask f, before a call to mem, for names for the texts
+// the call keeps without naming them.
 func Namer(f NamerFunc) RunOption {
 	return func(o *runOptions) { o.namer = f }
 }
@@ -197,13 +198,8 @@ func NewRunTool(vms *gnovm.Lazy, project string, opts ...RunOption) fantasy.Agen
 				req.Frames = o.stack(ctx, session)
 			}
 			if o.namer != nil && p.Name == gnovm.MemVM {
-				for _, text := range unnamedTexts(p.Code) {
-					if name := o.namer(ctx, session, text); name != "" {
-						if req.Names == nil {
-							req.Names = map[string]string{}
-						}
-						req.Names[text] = name
-					}
+				if texts := unnamedTexts(p.Code); len(texts) > 0 {
+					req.Names = o.namer(ctx, session, texts)
 				}
 			}
 			res, err := c.Run(ctx, req)
