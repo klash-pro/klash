@@ -3239,7 +3239,7 @@ func memNames(answer string, n int) []string {
 // at once, which must tell their texts apart.
 var (
 	namePrompt  = []byte("You name short notes and tasks for an index. Answer with the name only: two to four lowercase words joined by dashes, no quotes, no punctuation, no explanation.")
-	namesPrompt = []byte("You name tasks and notes for an index. You are given several at once, one per line. Answer with one name per line, in the same order, nothing else: each two to four lowercase words joined by dashes, no quotes, no punctuation. The names must differ from each other, so use the words that set each one apart; leave out what they all share.")
+	namesPrompt = []byte("You name tasks and notes for an index. You are given several at once, one per line. Answer with one name per line, in the same order, nothing else: each two to four lowercase words joined by dashes, no quotes, no punctuation. Name each by its own subject (the thing it is about, then the action), and no two names may be the same: when lines are alike, the word that sets a line apart goes first.")
 )
 
 // memName is answer as a mem name: lowercase words of letters and digits

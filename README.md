@@ -17,7 +17,7 @@ Gnosh is functional AI: the agent's context is a call stack. It runs the <a href
 
 <p align="center">
   <a href="https://gnosh.ai/gnosh-demo.mp4"><img src="https://gnosh.ai/gnosh-demo.jpg" width="100%" alt="Gnosh in a terminal: click to play a 106-second real run"></a><br>
-  <sub>A real run, recorded in Ghostty, with the waiting cut short: Qwen3.8 27B on a home AI box works out the backoff in Gno, plans a goal in <code>mem</code>, and a new session finishes it. Click to play.</sub>
+  <sub>A real run, recorded in Ghostty, with the waiting cut short: Qwen3.8 27B on a home AI box works out the backoff in Gno, plans a task in <code>mem</code>, and a new session finishes it. Click to play.</sub>
 </p>
 
 <p align="center">
