@@ -877,7 +877,10 @@ func (f *frameStacks) stackLine(ctx context.Context, sessionID string) string {
 
 // slidLine is what the model is told after a slide while it stands in
 // frames: that the start of a frame it is still in is out of its context,
-// and where what it held is; "" when no frame on the stack was slid.
+// where what it held is, and that the reads made there are forgotten (as
+// a pop's clause says), so it views a file again before it edits it
+// rather than have the edit refused; "" when no frame on the stack was
+// slid.
 func slidLine(slid []string, stack []stackFrame) string {
 	var names []string
 	var last string
@@ -894,7 +897,7 @@ func slidLine(slid []string, stack []stackFrame) string {
 	if len(names) > 1 {
 		start = "The starts of " + strings.Join(names, " and ")
 	}
-	return start + " left your context to make room; mem.Show(" + strconv.Quote(last) + ") has the plan, the results so far and the thoughts."
+	return start + " left your context to make room; mem.Show(" + strconv.Quote(last) + ") has the plan, the results so far and the thoughts. Your reads inside it are forgotten: view a file before you edit it."
 }
 
 // largeStep is the line the model is given once, inside a frame whose

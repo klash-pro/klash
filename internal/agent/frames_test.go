@@ -427,8 +427,8 @@ func TestSlidLine(t *testing.T) {
 	t.Parallel()
 
 	stack := []stackFrame{{id: "g"}, {id: "g/s1"}}
-	require.Equal(t, "The start of `g` left your context to make room; mem.Show(\"g\") has the plan, the results so far and the thoughts.", slidLine([]string{"g"}, stack))
-	require.Equal(t, "The starts of `g` and `g/s1` left your context to make room; mem.Show(\"g/s1\") has the plan, the results so far and the thoughts.", slidLine([]string{"g", "g/s1"}, stack))
+	require.Equal(t, "The start of `g` left your context to make room; mem.Show(\"g\") has the plan, the results so far and the thoughts. Your reads inside it are forgotten: view a file before you edit it.", slidLine([]string{"g"}, stack))
+	require.Equal(t, "The starts of `g` and `g/s1` left your context to make room; mem.Show(\"g/s1\") has the plan, the results so far and the thoughts. Your reads inside it are forgotten: view a file before you edit it.", slidLine([]string{"g", "g/s1"}, stack))
 	require.Empty(t, slidLine([]string{"h"}, stack), "a frame popped since is not spoken of")
 	require.Empty(t, slidLine(nil, stack))
 	require.Empty(t, slidLine([]string{"g"}, nil))
