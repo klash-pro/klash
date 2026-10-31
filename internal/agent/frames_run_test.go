@@ -849,3 +849,44 @@ func TestFrames_SlideBeforeThePrompt(t *testing.T) {
 	}
 	require.Zero(t, s.frames.estimate(s.sessID))
 }
+
+// A hidden prompt, a continuation the agent sends itself, carries no frame
+// line, so a slide made before it is told by a hidden line of its own
+// before the model's first reply.
+func TestFrames_SlideBeforeAHiddenPrompt(t *testing.T) {
+	// t.Setenv below: not in parallel.
+	replies := map[string]memReply{
+		pushG: {text: inG, events: []gnovm.MemFrame{pushed("g", "fix it")}},
+	}
+	steps := [][]fantasy.StreamPart{
+		calling(memCall("c1", pushG)),
+		calling(workCall("w1", 6)),
+		calling(workCall("w2", 2)),
+		saying("so far so good"),
+		calling(workCall("w3", 1)),
+		saying("done"),
+	}
+	s := newFramesScenario(t, replies, steps, 4_000)
+	s.run("fix it")
+	sess, err := s.env.sessions.Get(t.Context(), s.sessID)
+	require.NoError(t, err)
+	total := sess.PromptTokens + sess.CompletionTokens
+	t.Setenv("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", fmt.Sprint((total-250)*100/4_000))
+	require.Greater(t, total, compactAt(4_000, 0, true), "the scenario must be over the point as the prompt comes")
+
+	_, err = s.agent.Run(t.Context(), SessionAgentCall{SessionID: s.sessID, Prompt: "carry on", HiddenUserMessage: true, NonInteractive: true})
+	require.NoError(t, err)
+	rows := s.rows()
+	require.False(t, slices.ContainsFunc(rows, func(m message.Message) bool { return m.IsSummaryMessage }), "the conversation was not compacted")
+	require.Equal(t, "slide:g:c1:w2", s.poppedBy()["call:w1"])
+	users := s.userRows()
+	carry := slices.IndexFunc(users, func(text string) bool { return strings.Contains(text, "carry on") })
+	require.GreaterOrEqual(t, carry, 0)
+	require.NotContains(t, users[carry], "left your context", "a hidden prompt has no frame line")
+	require.True(t, slices.ContainsFunc(users[carry+1:], func(text string) bool {
+		return strings.Contains(text, "The start of `g` left your context to make room")
+	}), "told before the first reply: %q", users[carry:])
+	for i := range s.model.requestCount() {
+		validSequence(t, s.model.prompts[i])
+	}
+}

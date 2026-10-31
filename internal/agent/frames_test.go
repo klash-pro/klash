@@ -281,8 +281,8 @@ func TestLargeLine(t *testing.T) {
 // above it, whole; else the oldest rounds of the frame, the shortest cut
 // that frees what is needed and at least half of the body, ending at an
 // assistant row with a tool call that keeps the rest; never the prompt
-// the model is answering; rows out of the context already are passed
-// over.
+// the turn answers; rows out of the context already, popped or behind the
+// summary, are passed over.
 func TestSlideRange(t *testing.T) {
 	t.Parallel()
 
@@ -311,15 +311,19 @@ func TestSlideRange(t *testing.T) {
 		}
 		return out
 	}
+	cut := func(msgs []message.Message, stack []*stackFrame, need int64, promptID string) (poppedRange, []string, bool) {
+		r, rows, ok := slideRange(msgs, stack, need, promptID, behindSummary(msgs))
+		return r, rowIDs(rows), ok
+	}
 	g := &stackFrame{id: "g", callID: "c1"}
 	s1 := &stackFrame{id: "g/s1", callID: "c2"}
 
 	t.Run("the bottom frame's body goes first, whole", func(t *testing.T) {
 		msgs := list(prompt("u0", "fix it"), push("c1"), round("w1", 2), round("w2", 2), push("c2"), round("w3", 2), round("w4", 2), round("w5", 2))
-		r, cut, ok := slideRange(msgs, []*stackFrame{g, s1}, 1)
+		r, ids, ok := cut(msgs, []*stackFrame{g, s1}, 1, "u0")
 		require.True(t, ok)
 		require.Equal(t, poppedRange{frame: "g", pushCallID: "c1", popCallID: "c2"}, r)
-		require.Equal(t, []string{"a-w1", "t-w1", "a-w2", "t-w2"}, rowIDs(cut))
+		require.Equal(t, []string{"a-w1", "t-w1", "a-w2", "t-w2"}, ids)
 
 		// Gone already, the top frame's oldest rounds go: half of three
 		// rounds is two of them.
@@ -328,73 +332,93 @@ func TestSlideRange(t *testing.T) {
 				msgs[i].Popped = "slide:g:c1:c2"
 			}
 		}
-		r, cut, ok = slideRange(msgs, []*stackFrame{g, s1}, 1)
+		r, ids, ok = cut(msgs, []*stackFrame{g, s1}, 1, "u0")
 		require.True(t, ok)
 		require.Equal(t, poppedRange{frame: "g/s1", pushCallID: "c2", popCallID: "w5"}, r)
-		require.Equal(t, []string{"a-w3", "t-w3", "a-w4", "t-w4"}, rowIDs(cut))
+		require.Equal(t, []string{"a-w3", "t-w3", "a-w4", "t-w4"}, ids)
 	})
 
 	t.Run("one frame: the shortest cut that frees what is needed", func(t *testing.T) {
 		msgs := list(prompt("u0", "fix it"), push("c1"), round("w1", 1), round("w2", 1), round("w3", 1), round("w4", 1), round("w5", 1))
-		r, cut, ok := slideRange(msgs, []*stackFrame{g}, 1)
+		r, ids, ok := cut(msgs, []*stackFrame{g}, 1, "u0")
 		require.True(t, ok)
 		require.Equal(t, "w4", r.popCallID, "at least half: three rounds of five")
-		require.Equal(t, []string{"a-w1", "t-w1", "a-w2", "t-w2", "a-w3", "t-w3"}, rowIDs(cut))
+		require.Equal(t, []string{"a-w1", "t-w1", "a-w2", "t-w2", "a-w3", "t-w3"}, ids)
 
 		one := estimateMessageTokens(msgs[3].ToAIMessage()) + estimateMessageTokens(msgs[4].ToAIMessage())
-		r, cut, ok = slideRange(msgs, []*stackFrame{g}, 3*one+1)
+		r, ids, ok = cut(msgs, []*stackFrame{g}, 3*one+1, "u0")
 		require.True(t, ok)
 		require.Equal(t, "w5", r.popCallID, "more than three rounds: four")
-		require.Len(t, cut, 8)
+		require.Len(t, ids, 8)
 
-		r, cut, ok = slideRange(msgs, []*stackFrame{g}, 1<<40)
+		r, ids, ok = cut(msgs, []*stackFrame{g}, 1<<40, "u0")
 		require.True(t, ok)
 		require.Equal(t, "w5", r.popCallID, "when no cut frees enough, the longest: the last round stays")
-		require.Len(t, cut, 8)
+		require.Len(t, ids, 8)
 
 		two := list(prompt("u0", "fix it"), push("c1"), round("w1", 1), round("w2", 1))
-		r, cut, ok = slideRange(two, []*stackFrame{g}, 1)
+		r, ids, ok = cut(two, []*stackFrame{g}, 1, "u0")
 		require.True(t, ok)
 		require.Equal(t, "w2", r.popCallID, "half of two rounds is one")
-		require.Equal(t, []string{"a-w1", "t-w1"}, rowIDs(cut))
+		require.Equal(t, []string{"a-w1", "t-w1"}, ids)
 	})
 
-	t.Run("never the prompt the model is answering", func(t *testing.T) {
+	t.Run("never the prompt the turn answers", func(t *testing.T) {
 		msgs := list(prompt("u0", "fix it"), push("c1"), round("w1", 2), round("w2", 2), prompt("u1", "also x"), round("w3", 2), round("w4", 2))
-		r, cut, ok := slideRange(msgs, []*stackFrame{g}, 1<<40)
+		r, ids, ok := cut(msgs, []*stackFrame{g}, 1<<40, "u1")
 		require.True(t, ok)
 		require.Equal(t, "w2", r.popCallID, "the cut stops before the prompt")
-		require.Equal(t, []string{"a-w1", "t-w1"}, rowIDs(cut))
+		require.Equal(t, []string{"a-w1", "t-w1"}, ids)
 
-		_, _, ok = slideRange(list(prompt("u0", "fix it"), push("c1"), round("w1", 2), prompt("u1", "also x"), round("w2", 2), round("w3", 2)), []*stackFrame{g}, 1)
+		r, ids, ok = cut(msgs, []*stackFrame{g}, 1<<40, "")
+		require.True(t, ok)
+		require.Equal(t, "w4", r.popCallID, "before a prompt, an older one goes with the rounds around it")
+		require.Equal(t, []string{"a-w1", "t-w1", "a-w2", "t-w2", "u1", "a-w3", "t-w3"}, ids)
+
+		_, _, ok = cut(list(prompt("u0", "fix it"), push("c1"), round("w1", 2), prompt("u1", "also x"), round("w2", 2), round("w3", 2)), []*stackFrame{g}, 1, "u1")
 		require.False(t, ok, "one round before the prompt: nothing a cut can end at")
 
 		lower := list(prompt("u0", "fix it"), push("c1"), round("w1", 2), round("w2", 2), prompt("u1", "also x"), push("c2"), round("w3", 2), round("w4", 2))
-		r, cut, ok = slideRange(lower, []*stackFrame{g, s1}, 1)
+		r, ids, ok = cut(lower, []*stackFrame{g, s1}, 1, "u1")
 		require.True(t, ok)
 		require.Equal(t, poppedRange{frame: "g", pushCallID: "c1", popCallID: "w2"}, r, "a lower frame the prompt falls in is cut like the top one, before it")
-		require.Equal(t, []string{"a-w1", "t-w1"}, rowIDs(cut))
+		require.Equal(t, []string{"a-w1", "t-w1"}, ids)
 
-		hidden := list(prompt("u0", "fix it"), push("c1"), round("w1", 2), []message.Message{row(message.User, "h1", message.TextContent{Text: "reminder", Hidden: true})}, round("w2", 2), round("w3", 2))
-		r, cut, ok = slideRange(hidden, []*stackFrame{g}, 1<<40)
+		hidden := list(prompt("u0", "fix it"), push("c1"), round("w1", 2), round("w2", 2), []message.Message{row(message.User, "h1", message.TextContent{Text: "carry on", Hidden: true})}, round("w3", 2), round("w4", 2))
+		r, ids, ok = cut(hidden, []*stackFrame{g}, 1<<40, "h1")
 		require.True(t, ok)
-		require.Equal(t, "w3", r.popCallID, "a hidden line is no prompt")
-		require.Equal(t, []string{"a-w1", "t-w1", "h1", "a-w2", "t-w2"}, rowIDs(cut))
+		require.Equal(t, "w2", r.popCallID, "a hidden prompt is protected the same, by its row")
+		require.Equal(t, []string{"a-w1", "t-w1"}, ids)
+	})
+
+	t.Run("rows behind the summary are not the model's", func(t *testing.T) {
+		summary := []message.Message{
+			{ID: "sum", Role: message.Assistant, IsSummaryMessage: true, Parts: []message.ContentPart{message.TextContent{Text: "summary"}}},
+			row(message.User, "cont", message.TextContent{Text: "continue", Hidden: true}),
+		}
+		msgs := list(prompt("u0", "fix it"), push("c1"), round("w1", 2), round("w2", 2), summary, round("w3", 2), round("w4", 2), round("w5", 2))
+		r, ids, ok := cut(msgs, []*stackFrame{g}, 1, "u0")
+		require.True(t, ok)
+		require.Equal(t, poppedRange{frame: "g", pushCallID: "c1", popCallID: "w5"}, r, "half of the three rounds the model has")
+		require.Equal(t, []string{"a-w3", "t-w3", "a-w4", "t-w4"}, ids, "nothing from before the summary, nor its continuation")
+
+		_, _, ok = cut(list(prompt("u0", "fix it"), push("c1"), round("w1", 2), round("w2", 2), summary, round("w3", 2)), []*stackFrame{g}, 1, "u0")
+		require.False(t, ok, "one round since the summary: nothing to slide")
 	})
 
 	t.Run("nothing to slide", func(t *testing.T) {
 		msgs := list(prompt("u0", "fix it"), push("c1"), round("w1", 2))
-		_, _, ok := slideRange(msgs, nil, 1)
+		_, _, ok := cut(msgs, nil, 1, "u0")
 		require.False(t, ok, "no frame")
-		_, _, ok = slideRange(msgs, []*stackFrame{{id: "h", callID: "c-none"}}, 1)
+		_, _, ok = cut(msgs, []*stackFrame{{id: "h", callID: "c-none"}}, 1, "u0")
 		require.False(t, ok, "a push not among the rows")
-		_, _, ok = slideRange(msgs, []*stackFrame{g}, 1)
+		_, _, ok = cut(msgs, []*stackFrame{g}, 1, "u0")
 		require.False(t, ok, "a body of one round")
 		msgs = list(prompt("u0", "fix it"), push("c1"), round("w1", 2), round("w2", 2))
 		for i := 3; i < len(msgs); i++ {
 			msgs[i].Popped = "g/s0"
 		}
-		_, _, ok = slideRange(msgs, []*stackFrame{g}, 1)
+		_, _, ok = cut(msgs, []*stackFrame{g}, 1, "u0")
 		require.False(t, ok, "everything out of the context already")
 	})
 }

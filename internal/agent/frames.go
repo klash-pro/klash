@@ -171,6 +171,9 @@ func (rec *sessionFrames) apply(ev gnovm.MemFrame, callID string, tokens int64) 
 			popped := rec.stack[i]
 			rec.stack = slices.Delete(rec.stack, i, i+1)
 			rec.pops = append(rec.pops, poppedRange{frame: ev.Id, pushCallID: popped.callID, popCallID: callID})
+			// A slide's mark on the frame goes with it: pushed again under
+			// the same id, it is a new frame, with nothing cut from it.
+			rec.slid = slices.DeleteFunc(rec.slid, func(id string) bool { return id == ev.Id })
 			return popped
 		}
 	}
@@ -314,7 +317,7 @@ func (f *frameStacks) pop(ctx context.Context, sessionID string, rec *sessionFra
 	if len(rows) == 0 {
 		return "nothing came between, so nothing was removed from your context."
 	}
-	calls, reads, removed := f.remove(ctx, sessionID, rec, rows, ev.Id)
+	calls, reads, removed := f.remove(ctx, sessionID, rec, rows, ev.Id, behindSummary(msgs))
 	if f.notify != nil {
 		f.notify.Publish(pubsub.CreatedEvent, notify.Notification{
 			SessionID: sessionID,
@@ -328,9 +331,11 @@ func (f *frameStacks) pop(ctx context.Context, sessionID string, rec *sessionFra
 // remove takes rows out of the model's context, for a pop or a slide: the
 // rows are marked (message.Popped) with mark, the reads of the files they
 // touched and the views they were given are forgotten, and what they held
-// is estimated against the session's counts. It returns the rows' tool
-// calls by id, the paths they read, and about how many tokens left.
-func (f *frameStacks) remove(ctx context.Context, sessionID string, rec *sessionFrames, rows []message.Message, mark string) (calls map[string]message.ToolCall, reads []string, removed int64) {
+// is estimated against the session's counts, rows behind the summary
+// (stale, see behindSummary) not counted, since the model was not sent
+// them. It returns the rows' tool calls by id, the paths they read, and
+// about how many tokens left.
+func (f *frameStacks) remove(ctx context.Context, sessionID string, rec *sessionFrames, rows []message.Message, mark string, stale map[string]bool) (calls map[string]message.ToolCall, reads []string, removed int64) {
 	ids := make([]string, len(rows))
 	for i, row := range rows {
 		ids[i] = row.ID
@@ -355,15 +360,35 @@ func (f *frameStacks) remove(ctx context.Context, sessionID string, rec *session
 	if f.forgetGiven != nil {
 		f.forgetGiven(sessionID, ids)
 	}
-	// Rows an inner pop removed already are out of the context: they are
-	// marked again, not counted again.
+	// Rows an inner pop removed already are out of the context, and so
+	// are rows behind the summary: they are marked, not counted.
 	for _, row := range rows {
-		if row.Popped == "" {
+		if row.Popped == "" && !stale[row.ID] {
 			removed += estimateMessageTokens(row.ToAIMessage())
 		}
 	}
 	rec.estimate += removed
 	return calls, reads, removed
+}
+
+// behindSummary is the rows at and before the last summary among msgs, by
+// id: the model is not sent them (getSessionMessages starts at the
+// summary), so a cut neither counts them nor frees anything by them.
+func behindSummary(msgs []message.Message) map[string]bool {
+	last := -1
+	for i, m := range msgs {
+		if m.IsSummaryMessage {
+			last = i
+		}
+	}
+	if last < 0 {
+		return nil
+	}
+	stale := make(map[string]bool, last+1)
+	for _, m := range msgs[:last+1] {
+		stale[m.ID] = true
+	}
+	return stale
 }
 
 // slide is what the agent does instead of compacting while the session
@@ -373,13 +398,14 @@ func (f *frameStacks) remove(ctx context.Context, sessionID string, rec *session
 // the stack, that is the bottom frame's own body, from its push to the
 // next frame's push; with one frame, or every lower body gone already,
 // the oldest rounds of the top frame's body, as many as it takes to free
-// need tokens, at least half of it. The prompt the model is answering is
-// never cut. The rows are marked as the slide's and the cut is kept as a
-// range, so every later request leaves them out. It answers the line that
-// tells the model what left (slidLine), about how many tokens went, and
-// false when there is nothing to slide: no frame, or no body of more than
-// one round before the prompt.
-func (f *frameStacks) slide(ctx context.Context, sessionID string, need int64) (string, int64, bool) {
+// need tokens, at least half of it. promptID is the row of the prompt the
+// turn answers, which is never cut, or "" before a prompt. The rows are
+// marked as the slide's and the cut is kept as a range, so every later
+// request leaves them out. It answers the line that tells the model what
+// left (slidLine), about how many tokens went, and false when there is
+// nothing to slide: no frame, or no body of more than one round that the
+// model still has.
+func (f *frameStacks) slide(ctx context.Context, sessionID string, need int64, promptID string) (string, int64, bool) {
 	if f == nil || sessionID == "" {
 		return "", 0, false
 	}
@@ -397,11 +423,12 @@ func (f *frameStacks) slide(ctx context.Context, sessionID string, need int64) (
 		slog.Warn("Could not read the session's rows for a slide", "session_id", sessionID, "error", err)
 		return "", 0, false
 	}
-	r, rows, ok := slideRange(msgs, rec.stack, need)
+	stale := behindSummary(msgs)
+	r, rows, ok := slideRange(msgs, rec.stack, need, promptID, stale)
 	if !ok {
 		return "", 0, false
 	}
-	_, _, removed := f.remove(ctx, sessionID, rec, rows, slideMarkOf(r))
+	_, _, removed := f.remove(ctx, sessionID, rec, rows, slideMarkOf(r), stale)
 	rec.pops = append(rec.pops, r)
 	if !slices.Contains(rec.slid, r.frame) {
 		rec.slid = append(rec.slid, r.frame)
@@ -422,18 +449,18 @@ func (f *frameStacks) slide(ctx context.Context, sessionID string, need int64) (
 }
 
 // slideRange is the cut a slide makes, as a pop's range, with the rows it
-// removes: those not out of the context already. For each frame from the
-// bottom of stack, the body is the rows after its push's round and before
-// the next frame's push; a body with nothing left to cut is passed over.
-// The top frame's body, or one the prompt the model is answering falls
-// in, is cut from its start to an assistant row with a tool call, which
-// keeps the rest and the prompt: the shortest cut that frees need tokens
-// and at least half of the body before the prompt, or the longest when
-// none does.
-func slideRange(msgs []message.Message, stack []*stackFrame, need int64) (poppedRange, []message.Message, bool) {
+// removes: those the model still has, neither popped nor behind the
+// summary (stale). For each frame from the bottom of stack, the body is
+// the rows after its push's round and before the next frame's push; a
+// body with nothing left to cut is passed over. The top frame's body, or
+// one the prompt the turn answers (the row promptID) falls in, is cut from
+// its start to an assistant row with a tool call, which keeps the rest and
+// the prompt: the shortest cut that frees need tokens and at least half of
+// the body before the prompt, or the longest when none does.
+func slideRange(msgs []message.Message, stack []*stackFrame, need int64, promptID string, stale map[string]bool) (poppedRange, []message.Message, bool) {
 	fresh := func(rows []message.Message) (out []message.Message, tokens int64) {
 		for _, row := range rows {
-			if row.Popped == "" {
+			if row.Popped == "" && !stale[row.ID] {
 				out = append(out, row)
 				tokens += estimateMessageTokens(row.ToAIMessage())
 			}
@@ -443,7 +470,10 @@ func slideRange(msgs []message.Message, stack []*stackFrame, need int64) (popped
 	pushOf := func(callID string) int {
 		return slices.IndexFunc(msgs, func(m message.Message) bool { return m.Role == message.Assistant && hasToolCall(m, callID) })
 	}
-	prompt := latestPrompt(msgs)
+	prompt := -1
+	if promptID != "" {
+		prompt = slices.IndexFunc(msgs, func(m message.Message) bool { return m.ID == promptID })
+	}
 	for i, fr := range stack {
 		push := pushOf(fr.callID)
 		if push < 0 {
@@ -496,19 +526,6 @@ func slideRange(msgs []message.Message, stack []*stackFrame, need int64) (popped
 		}
 	}
 	return poppedRange{}, nil, false
-}
-
-// latestPrompt is the index of the last of the user's own prompts among
-// msgs, a user row whose text is not hidden; -1 with none.
-func latestPrompt(msgs []message.Message) int {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == message.User {
-			if text := msgs[i].Content(); !text.Hidden && text.Text != "" {
-				return i
-			}
-		}
-	}
-	return -1
 }
 
 // poppedRows is the rows a pop removes from the model's context: those

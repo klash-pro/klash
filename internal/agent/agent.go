@@ -1264,20 +1264,30 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	// the summary's alone; the next step's tells whether the summary
 	// brought the conversation under the point (see compacts). A session
 	// standing in frames slides instead when it can (see slides): the
-	// prompt's frame line then tells the model what left its context.
-	if _, summarized := a.justSummarized.Get(call.SessionID); !summarized &&
-		a.compactsNow(ctx, call.SessionID, int64(largeModel.CatwalkCfg.ContextWindow), currentSession.PromptTokens+currentSession.CompletionTokens-a.frames.estimate(call.SessionID)) {
-		if err := a.compactBeforeRequest(ctx, genCtx, &call); err != nil {
-			if persistErr := a.persistCanceledTurn(ctx, call, false); persistErr != nil {
-				return nil, persistErr
+	// prompt's frame line then tells the model what left its context, or,
+	// for a hidden prompt, which carries no frame line, the turn's first
+	// step does. slideLine is what a slide tells the model before its next
+	// reply, until a step puts it in; promptRowID is the row of the prompt
+	// the turn answers, which no slide cuts.
+	var slideLine, promptRowID string
+	if _, summarized := a.justSummarized.Get(call.SessionID); !summarized {
+		compact, slid := a.compactsOrSlides(ctx, call.SessionID, "", int64(largeModel.CatwalkCfg.ContextWindow), currentSession.PromptTokens+currentSession.CompletionTokens-a.frames.estimate(call.SessionID))
+		if slid != "" && !call.memLine {
+			slideLine = slid
+		}
+		if compact {
+			if err := a.compactBeforeRequest(ctx, genCtx, &call); err != nil {
+				if persistErr := a.persistCanceledTurn(ctx, call, false); persistErr != nil {
+					return nil, persistErr
+				}
+				return nil, err
 			}
-			return nil, err
-		}
-		if currentSession, err = a.sessions.Get(ctx, call.SessionID); err != nil {
-			return nil, fmt.Errorf("failed to get session: %w", err)
-		}
-		if msgs, err = a.getSessionMessages(ctx, currentSession); err != nil {
-			return nil, fmt.Errorf("failed to get session messages: %w", err)
+			if currentSession, err = a.sessions.Get(ctx, call.SessionID); err != nil {
+				return nil, fmt.Errorf("failed to get session: %w", err)
+			}
+			if msgs, err = a.getSessionMessages(ctx, currentSession); err != nil {
+				return nil, fmt.Errorf("failed to get session messages: %w", err)
+			}
 		}
 	}
 
@@ -1285,10 +1295,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	// and the frames in mem it is in.
 	a.recall(ctx, &call)
 	a.frameLine(ctx, &call)
-	_, err = a.createUserMessage(ctx, call)
+	promptRow, err := a.createUserMessage(ctx, call)
 	if err != nil {
 		return nil, err
 	}
+	promptRowID = promptRow.ID
 	userMsgCreated = true
 
 	// Add the session to the context. The run context (genCtx) and its
@@ -1312,9 +1323,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	var cutSent bool
 	var cutTokens int64
 	var shouldSummarize bool
-	// slideLine is what a slide made after a step (see compactsOrSlides)
-	// tells the model before its next reply, until a step puts it in.
-	var slideLine string
 	// The tool calls the agent was caught repeating, when that is what
 	// stopped the run; see loopContinuation.
 	var loopCalls []fantasy.ToolCallContent
@@ -1381,6 +1389,8 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 					return callContext, prepared, createErr
 				}
 				added = append(added, userMessage.ToAIMessage()...)
+				// The newest prompt is the one the turn answers now.
+				promptRowID = userMessage.ID
 			}
 
 			reminder, err := a.remindOfMem(callContext, call.SessionID, prepared.Tools)
@@ -1620,7 +1630,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				// and goes on, told so before its next reply (slideLine);
 				// else the turn stops here for the summary.
 				tokens := currentSession.CompletionTokens + currentSession.PromptTokens - a.frames.estimate(call.SessionID)
-				compact, slid := a.compactsOrSlides(genCtx, call.SessionID, int64(largeModel.CatwalkCfg.ContextWindow), tokens)
+				compact, slid := a.compactsOrSlides(genCtx, call.SessionID, promptRowID, int64(largeModel.CatwalkCfg.ContextWindow), tokens)
 				if slid != "" {
 					slideLine = slid
 				}
