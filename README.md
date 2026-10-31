@@ -21,6 +21,7 @@ Gnosh is functional AI: the agent's context is a call stack. It runs the <a href
 </p>
 
 <p align="center">
+  <a href="#frames-no-more-compaction">Frames</a> ·
   <a href="#memory-that-runs">Memory that runs</a> ·
   <a href="GNOMEM.md">GNOMEM</a> ·
   <a href="#security-first">Security first</a> ·
@@ -42,6 +43,10 @@ Gnosh is a fork of Charm's [Crush](https://github.com/charmbracelet/crush):
 the same terminal UI, sessions, LSP and MCP support, and any model you like,
 from a hosted API to one running on your own machine. On top of that:
 
+- **Frames, not compaction.** The agent's context is a call stack: a todo
+  done is cut from the model's context with its result kept, so finished work
+  never piles up, and a long task needs no compaction to survive it:
+  [frames](#frames-no-more-compaction).
 - **Thinks in Gno.** The Gno VM runs inside Gnosh, and the agent works an
   answer out in a machine instead of estimating it:
   [the machines underneath](#thinks-in-gno-the-machines-underneath).
@@ -49,9 +54,6 @@ from a hosted API to one running on your own machine. On top of that:
   cannot be closed while one under it is open, so "the tests pass" is
   reached, not claimed, and a separate judge checks each task the agent
   closes against the conversation: [a todo that outlives the session](#a-todo-that-outlives-the-session).
-- **Plans in frames.** A todo done is cut from the model's context with its
-  result kept, so finished work doesn't fill the window and compaction becomes
-  a backstop: [frames](GNOMEM.md#frames).
 - **Remembers in Gno.** What it found, what waits on you and the facts you
   told it stay in `mem` on your disk, and a new session starts with them:
   [memory that runs](#memory-that-runs).
@@ -70,6 +72,45 @@ from a hosted API to one running on your own machine. On top of that:
 - **Knows Gno and gno.land.** Every signature waits for you to type the key's
   password, which the model never sees, and a session key caps what even a
   transaction you approved can spend.
+
+## Frames: no more compaction
+
+A model's context fills with everything it read and ran, until a compaction
+throws most of it away and the task limps on from a summary. Gnosh works a
+task as a call stack instead. Each todo is a frame: the agent enters it
+(`mem.Push`), works, and leaves it with a result (`mem.Pop("what came of
+it")`), and from then on everything between the push and the pop, the files
+it read, the commands it ran, what you said in between, is left out of what
+the model is sent. The result stays, in the context and in mem; what a frame
+learned beyond its result it keeps first as a thought, which outlives the pop.
+Nothing is deleted: you still see all of it, the transcript keeps it, and
+nothing the agent did is undone. Only the model's context shrinks, the way a
+stack frame goes when a function returns and only its value comes back.
+
+So a long task runs with the context holding the plan, the results so far and
+the present todo's work, however many todos there are. Compaction stops being
+how a long task survives and becomes a backstop. In the model server's log of
+a real run, the request after a 3K-token pop re-read 2,572 tokens instead of
+the whole 20K-token conversation, and the requests after it were back to a
+few hundred each: the cache survived the cut.
+
+In a real run on 31 October 2026, the second session of the rename below,
+each pop's result ends with Gnosh's own line on what left the context (shown
+as it happened; the replayed calls are under
+[what the agent runs](#what-the-agent-runs)):
+
+```go
+mem.Push("klash-to-gnosh-rename/gnosh-readme-rename")
+// in `klash-to-gnosh-rename/gnosh-readme-rename` "rename klash to gnosh in README.md": when it is done, pop it with what came of it and what the next todo needs. …
+// … the README read, edited and searched; then
+mem.Pop("README.md fully renamed klash→gnosh (title, prose, build/usage snippet, config file mentions incl. gnosh.toml and gnosh.example.toml); case-insensitive grep for klash finds nothing")
+// done `klash-to-gnosh-rename/gnosh-readme-rename` "rename klash to gnosh in README.md" → README.md fully renamed klash→gnosh (title, prose, build/usage snippet, config file mentions incl. gnosh.toml and gnosh.example.toml); case-insensitive grep for klash finds nothing
+// next: `klash-to-gnosh-rename/gnosh-build-output-rename` "rename the build output klash to gnosh in the Makefile": mem.Push("klash-to-gnosh-rename/gnosh-build-output-rename")
+// Everything since you entered `klash-to-gnosh-rename/gnosh-readme-rename` was removed from your context: this result stays; the user still sees all of it. In it you edited README.md. Your reads inside it are forgotten: view a file before you edit it.
+```
+
+[GNOMEM](GNOMEM.md#frames) has the design: what a frame holds, what a thought
+is, and how a thought becomes a todo of its own.
 
 ## Memory that runs
 

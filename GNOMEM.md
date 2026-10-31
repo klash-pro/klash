@@ -146,7 +146,9 @@ agent's context is a call stack, a todo's work leaves it when the todo
 returns, and its result stays, as a function's locals go when it returns and
 its value comes back. A long task is its todos done one frame at a time: the
 context holds the plan, the results so far and the present todo's work,
-however long the task runs, and compaction becomes a backstop.
+however long the task runs, and compaction becomes a backstop: no more
+compactions to get a long task through, since a todo's work leaves the
+context as the todo finishes.
 
 ```go mem
 mem.Todo("fix the flaky test").Push()
@@ -492,12 +494,12 @@ second column says, never naming Gno or mem unless it says so. The checks are
 scripted: files, test results, the final answer, and what mem holds at the
 end.
 
-Of the 38 use cases, 34 passed every check; the notes under the table say
+Of the 38 use cases, 35 passed every check; the notes under the table say
 what the other 3 did.
 
 | Use case | What the user asks | Sessions | Checks passed |
 |---|---|---|---|
-| rename-project | the README's task: rename klash to gnosh everywhere, "plan it as todos and do the first one now; we'll carry on in another session" | 2 | 4 of 6 |
+| rename-project | the README's task: rename klash to gnosh everywhere, "plan it as todos and do the first one now; we'll carry on in another session" | 2 | all 6 |
 | long-goal-sessions | a four-step plan kept in Gno, one step per session | 4 | all 14 |
 | resume-checklist | a checklist of four jobs, two now, the rest in a new session | 2 | all 8 |
 | goal-until-green | make `go test ./...` pass, keeping the goal and its condition in Gno | 1 | all 7 |
