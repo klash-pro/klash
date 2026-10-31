@@ -174,6 +174,11 @@ func (rec *sessionFrames) apply(ev gnovm.MemFrame, callID string, tokens int64) 
 			// A slide's mark on the frame goes with it: pushed again under
 			// the same id, it is a new frame, with nothing cut from it.
 			rec.slid = slices.DeleteFunc(rec.slid, func(id string) bool { return id == ev.Id })
+			if len(rec.stack) == 0 {
+				// The rounds before the first frame, slid, were before
+				// this one: the next frame is a new first.
+				rec.slid = nil
+			}
 			return popped
 		}
 	}
@@ -392,13 +397,13 @@ func behindSummary(msgs []message.Message) map[string]bool {
 }
 
 // slide is what the agent does instead of compacting while the session
-// stands in frames: it takes the oldest part of the open frames' work out
-// of the model's context, since mem holds their plan, their results and
-// their thoughts (FRAMES.md draft 15). With frames under the bottom one on
-// the stack, that is the bottom frame's own body, from its push to the
-// next frame's push; with one frame, or every lower body gone already,
-// the oldest rounds of the top frame's body, as many as it takes to free
-// need tokens, at least half of it. promptID is the row of the prompt the
+// stands in frames: it takes the oldest part of the conversation out of
+// the model's context, since mem holds the plan, the results and the
+// thoughts (FRAMES.md draft 15). The oldest goes first: the rounds before
+// the first frame (all but their first, which anchors the cut), then each
+// lower frame's whole body, then the oldest rounds of the frame the model
+// stands in, as many as it takes to free need tokens, at least half of
+// them (see slideRange). promptID is the row of the prompt the
 // turn answers, which is never cut, or "" before a prompt. The rows are
 // marked as the slide's and the cut is kept as a range, so every later
 // request leaves them out. It answers the line that tells the model what
@@ -450,13 +455,18 @@ func (f *frameStacks) slide(ctx context.Context, sessionID string, need int64, p
 
 // slideRange is the cut a slide makes, as a pop's range, with the rows it
 // removes: those the model still has, neither popped nor behind the
-// summary (stale). For each frame from the bottom of stack, the body is
-// the rows after its push's round and before the next frame's push; a
-// body with nothing left to cut is passed over. The top frame's body, or
-// one the prompt the turn answers (the row promptID) falls in, is cut from
-// its start to an assistant row with a tool call, which keeps the rest and
-// the prompt: the shortest cut that frees need tokens and at least half of
-// the body before the prompt, or the longest when none does.
+// summary (stale). The oldest go first. Before the first frame, the rows
+// since the summary, or since the prompt the turn answers (the row
+// promptID), are cut from after their first round, which anchors the cut
+// as a push's round does, to an assistant row with a tool call, the
+// frame's push at the latest. Then, for each frame from the bottom of
+// stack, the body is the rows after its push's round and before the next
+// frame's push; a body with nothing left to cut is passed over. The top
+// frame's body, or one the prompt falls in, is cut from its start to an
+// assistant row with a tool call, which keeps the rest and the prompt. A
+// cut to a row of the agent's choosing is the shortest that frees need
+// tokens and at least half of what lies before it, or the longest when
+// none does.
 func slideRange(msgs []message.Message, stack []*stackFrame, need int64, promptID string, stale map[string]bool) (poppedRange, []message.Message, bool) {
 	fresh := func(rows []message.Message) (out []message.Message, tokens int64) {
 		for _, row := range rows {
@@ -470,9 +480,69 @@ func slideRange(msgs []message.Message, stack []*stackFrame, need int64, promptI
 	pushOf := func(callID string) int {
 		return slices.IndexFunc(msgs, func(m message.Message) bool { return m.Role == message.Assistant && hasToolCall(m, callID) })
 	}
+	// roundEnd is the index after the round of the assistant row at i:
+	// after its tool rows.
+	roundEnd := func(i int) int {
+		j := i + 1
+		for j < len(msgs) && msgs[j].Role == message.Tool {
+			j++
+		}
+		return j
+	}
+	// oldest is the cut from after the round of the assistant row at
+	// anchor, whose call anchorCall names the range's push, to an
+	// assistant row with a tool call before limit; the body it is half of
+	// ends at upto.
+	oldest := func(frame string, anchor int, anchorCall string, limit, upto int) (poppedRange, []message.Message, bool) {
+		from := roundEnd(anchor)
+		var total int64
+		if from < upto {
+			_, total = fresh(msgs[from:upto])
+		}
+		want := max(need, total/2)
+		var best poppedRange
+		var bestRows []message.Message
+		var bestTokens int64
+		for j := from; j < limit && j < len(msgs); j++ {
+			if msgs[j].Role != message.Assistant || len(msgs[j].ToolCalls()) == 0 {
+				continue
+			}
+			call := msgs[j].ToolCalls()[0].ID
+			rows, tokens := fresh(poppedRows(msgs, anchorCall, call))
+			if tokens <= bestTokens {
+				continue
+			}
+			best, bestRows, bestTokens = poppedRange{frame: frame, pushCallID: anchorCall, popCallID: call}, rows, tokens
+			if tokens >= want {
+				break
+			}
+		}
+		return best, bestRows, bestTokens > 0
+	}
+	if len(stack) == 0 {
+		return poppedRange{}, nil, false
+	}
 	prompt := -1
 	if promptID != "" {
 		prompt = slices.IndexFunc(msgs, func(m message.Message) bool { return m.ID == promptID })
+	}
+	// The rounds before the first frame, since the summary or the prompt.
+	if bottom := pushOf(stack[0].callID); bottom >= 0 {
+		start := prompt + 1
+		for i := bottom - 1; i >= start; i-- {
+			if msgs[i].IsSummaryMessage {
+				start = i + 1
+				break
+			}
+		}
+		for i := start; i < bottom; i++ {
+			if msgs[i].Role == message.Assistant && len(msgs[i].ToolCalls()) > 0 {
+				if r, rows, ok := oldest("", i, msgs[i].ToolCalls()[0].ID, bottom+1, bottom); ok {
+					return r, rows, true
+				}
+				break
+			}
+		}
 	}
 	for i, fr := range stack {
 		push := pushOf(fr.callID)
@@ -497,32 +567,8 @@ func slideRange(msgs []message.Message, stack []*stackFrame, need int64, promptI
 			}
 			continue
 		}
-		// The body starts after the push's round: its tool rows.
-		from := push + 1
-		for from < limit && msgs[from].Role == message.Tool {
-			from++
-		}
-		_, total := fresh(msgs[from:limit])
-		want := max(need, total/2)
-		var best poppedRange
-		var bestRows []message.Message
-		var bestTokens int64
-		for j := from; j < limit; j++ {
-			if msgs[j].Role != message.Assistant || len(msgs[j].ToolCalls()) == 0 {
-				continue
-			}
-			call := msgs[j].ToolCalls()[0].ID
-			rows, tokens := fresh(poppedRows(msgs, fr.callID, call))
-			if tokens <= bestTokens {
-				continue
-			}
-			best, bestRows, bestTokens = poppedRange{frame: fr.id, pushCallID: fr.callID, popCallID: call}, rows, tokens
-			if tokens >= want {
-				break
-			}
-		}
-		if bestTokens > 0 {
-			return best, bestRows, true
+		if r, rows, ok := oldest(fr.id, push, fr.callID, limit, limit); ok {
+			return r, rows, true
 		}
 	}
 	return poppedRange{}, nil, false
@@ -876,28 +922,34 @@ func (f *frameStacks) stackLine(ctx context.Context, sessionID string) string {
 }
 
 // slidLine is what the model is told after a slide while it stands in
-// frames: that the start of a frame it is still in is out of its context,
-// where what it held is, and that the reads made there are forgotten (as
-// a pop's clause says), so it views a file again before it edits it
-// rather than have the edit refused; "" when no frame on the stack was
-// slid.
+// frames: what is out of its context (its rounds before the first frame,
+// the start of a frame it is still in), where what they held is, and that
+// the reads made there are forgotten (as a pop's clause says), so it
+// views a file again before it edits it rather than have the edit
+// refused; "" when nothing slid concerns a frame on the stack.
 func slidLine(slid []string, stack []stackFrame) string {
-	var names []string
-	var last string
-	for _, id := range slid {
-		if slices.ContainsFunc(stack, func(fr stackFrame) bool { return fr.id == id }) {
-			names = append(names, "`"+id+"`")
-			last = id
-		}
-	}
-	if len(names) == 0 {
+	if len(stack) == 0 {
 		return ""
 	}
-	start := "The start of " + names[0]
-	if len(names) > 1 {
-		start = "The starts of " + strings.Join(names, " and ")
+	var what []string
+	var show string
+	for _, id := range slid {
+		switch {
+		case id == "":
+			what = append(what, "your rounds before `"+stack[0].id+"`")
+			if show == "" {
+				show = stack[0].id
+			}
+		case slices.ContainsFunc(stack, func(fr stackFrame) bool { return fr.id == id }):
+			what = append(what, "the start of `"+id+"`")
+			show = id
+		}
 	}
-	return start + " left your context to make room; mem.Show(" + strconv.Quote(last) + ") has the plan, the results so far and the thoughts. Your reads inside it are forgotten: view a file before you edit it."
+	if len(what) == 0 {
+		return ""
+	}
+	text := strings.Join(what, " and ")
+	return strings.ToUpper(text[:1]) + text[1:] + " left your context to make room; mem.Show(" + strconv.Quote(show) + ") has the plan, the results so far and the thoughts. Your reads there are forgotten: view a file before you edit it."
 }
 
 // largeStep is the line the model is given once, inside a frame whose

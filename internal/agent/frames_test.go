@@ -406,6 +406,41 @@ func TestSlideRange(t *testing.T) {
 		require.False(t, ok, "one round since the summary: nothing to slide")
 	})
 
+	t.Run("the rounds before the first frame go first, all but their first", func(t *testing.T) {
+		msgs := list(prompt("u0", "fix it"), round("x1", 1), round("v1", 2), round("v2", 2), push("c1"), round("w1", 2), round("w2", 2), round("w3", 2))
+		r, ids, ok := cut(msgs, []*stackFrame{g}, 1, "u0")
+		require.True(t, ok)
+		require.Equal(t, poppedRange{frame: "", pushCallID: "x1", popCallID: "v2"}, r, "half of what lies before the frame, after its first round")
+		require.Equal(t, []string{"a-v1", "t-v1"}, ids)
+
+		r, ids, ok = cut(msgs, []*stackFrame{g}, 1<<40, "u0")
+		require.True(t, ok)
+		require.Equal(t, poppedRange{frame: "", pushCallID: "x1", popCallID: "c1"}, r, "up to the push, which stays")
+		require.Equal(t, []string{"a-v1", "t-v1", "a-v2", "t-v2"}, ids)
+
+		for i := range msgs {
+			if strings.HasSuffix(msgs[i].ID, "v1") || strings.HasSuffix(msgs[i].ID, "v2") {
+				msgs[i].Popped = "slide::x1:c1"
+			}
+		}
+		r, ids, ok = cut(msgs, []*stackFrame{g}, 1, "u0")
+		require.True(t, ok)
+		require.Equal(t, poppedRange{frame: "g", pushCallID: "c1", popCallID: "w3"}, r, "gone, the frame's own start")
+		require.Equal(t, []string{"a-w1", "t-w1", "a-w2", "t-w2"}, ids)
+
+		words := list(prompt("u0", "fix it"), []message.Message{row(message.Assistant, "a-say", message.TextContent{Text: "looking"})}, push("c1"), round("w1", 2), round("w2", 2))
+		r, ids, ok = cut(words, []*stackFrame{g}, 1, "u0")
+		require.True(t, ok)
+		require.Equal(t, "g", r.frame, "no round before the frame to anchor a cut: the frame's start")
+		require.Equal(t, []string{"a-w1", "t-w1"}, ids)
+
+		inTurn := list(prompt("u0", "fix it"), round("x1", 1), round("v1", 2), prompt("u1", "also x"), round("v2", 2), round("v3", 2), push("c1"), round("w1", 2))
+		r, ids, ok = cut(inTurn, []*stackFrame{g}, 1<<40, "u1")
+		require.True(t, ok)
+		require.Equal(t, poppedRange{frame: "", pushCallID: "v2", popCallID: "c1"}, r, "since the prompt the turn answers")
+		require.Equal(t, []string{"a-v3", "t-v3"}, ids)
+	})
+
 	t.Run("nothing to slide", func(t *testing.T) {
 		msgs := list(prompt("u0", "fix it"), push("c1"), round("w1", 2))
 		_, _, ok := cut(msgs, nil, 1, "u0")
@@ -427,11 +462,15 @@ func TestSlidLine(t *testing.T) {
 	t.Parallel()
 
 	stack := []stackFrame{{id: "g"}, {id: "g/s1"}}
-	require.Equal(t, "The start of `g` left your context to make room; mem.Show(\"g\") has the plan, the results so far and the thoughts. Your reads inside it are forgotten: view a file before you edit it.", slidLine([]string{"g"}, stack))
-	require.Equal(t, "The starts of `g` and `g/s1` left your context to make room; mem.Show(\"g/s1\") has the plan, the results so far and the thoughts. Your reads inside it are forgotten: view a file before you edit it.", slidLine([]string{"g", "g/s1"}, stack))
+	const tail = " has the plan, the results so far and the thoughts. Your reads there are forgotten: view a file before you edit it."
+	require.Equal(t, "The start of `g` left your context to make room; mem.Show(\"g\")"+tail, slidLine([]string{"g"}, stack))
+	require.Equal(t, "The start of `g` and the start of `g/s1` left your context to make room; mem.Show(\"g/s1\")"+tail, slidLine([]string{"g", "g/s1"}, stack))
+	require.Equal(t, "Your rounds before `g` left your context to make room; mem.Show(\"g\")"+tail, slidLine([]string{""}, stack), "the rounds before the first frame")
+	require.Equal(t, "Your rounds before `g` and the start of `g/s1` left your context to make room; mem.Show(\"g/s1\")"+tail, slidLine([]string{"", "g/s1"}, stack))
 	require.Empty(t, slidLine([]string{"h"}, stack), "a frame popped since is not spoken of")
 	require.Empty(t, slidLine(nil, stack))
 	require.Empty(t, slidLine([]string{"g"}, nil))
+	require.Empty(t, slidLine([]string{""}, nil))
 }
 
 func TestSlideMark(t *testing.T) {

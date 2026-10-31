@@ -168,36 +168,42 @@ func (a *sessionAgent) compacts(sessionID string, cw, tokens int64) bool {
 }
 
 // slides is what a session standing in frames does at the point at which
-// it would be compacted (see compacts): the start of its oldest open
-// frame's work leaves the model's context instead (frameStacks.slide),
-// since mem holds that frame's plan, its results and its thoughts, and the
-// summary is kept for a session with no frame to cut. promptID is the row
-// of the prompt the turn answers, never cut, or "" before a prompt. The
-// slide frees what is over the point and a tenth of the window besides,
-// so the rounds that follow have room. It answers the line that tells the
-// model what left, and whether a slide was made.
+// it would be compacted (see compacts): the oldest part of the
+// conversation leaves the model's context instead (frameStacks.slide),
+// since mem holds the plan, the results and the thoughts, and the summary
+// is kept for a session with nothing to slide. promptID is the row of the
+// prompt the turn answers, never cut, or "" before a prompt. The slide
+// frees what is over the point as asked and a tenth of the window
+// besides, so the rounds that follow have room. It answers the line that
+// tells the model what left, and whether a slide was made.
 func (a *sessionAgent) slides(ctx context.Context, sessionID, promptID string, cw, tokens int64) (string, bool) {
-	level, _ := a.compactLevels.Get(sessionID)
 	window := cw
 	if window <= 0 {
 		window = unknownContextWindowFallback
 	}
-	need := tokens - compactAt(cw, a.autoCompactWindow(), level == compactAsAsked) + window/10
+	need := tokens - compactAt(cw, a.autoCompactWindow(), true) + window/10
 	line, _, ok := a.frames.slide(ctx, sessionID, need, promptID)
 	return line, ok
 }
 
 // compactsOrSlides is what a session over the point at which it is
-// compacted (see compacts) does: standing in frames it slides when it can
-// (see slides), else it is summarized. compact says the latter; slid is
-// the line that tells the model of a slide, for the frame line of the
-// prompt about to go out, or a hidden line before the model's next reply.
+// compacted does: standing in frames it slides when it can (see slides),
+// else it is summarized (see compacts). The slide is tried at the point
+// as asked, whatever a summary that could not bring the conversation
+// under it did to the level: a slide frees what it says or says it
+// cannot, so it is never the loop a repeated summary would be; a slide
+// made also stands for the summary's check. compact says the latter;
+// slid is the line that tells the model of a slide, for the frame line
+// of the prompt about to go out, or a hidden line before the model's next
+// reply.
 func (a *sessionAgent) compactsOrSlides(ctx context.Context, sessionID, promptID string, cw, tokens int64) (compact bool, slid string) {
-	if !a.compacts(sessionID, cw, tokens) {
-		return false, ""
+	if autoSummarize(cw, a.autoCompactWindow(), tokens, a.disableAutoSummarize, true) {
+		if line, ok := a.slides(ctx, sessionID, promptID, cw, tokens); ok {
+			a.justSummarized.Take(sessionID)
+			return false, line
+		}
 	}
-	line, ok := a.slides(ctx, sessionID, promptID, cw, tokens)
-	return !ok, line
+	return a.compacts(sessionID, cw, tokens), ""
 }
 
 // compactBeforeRequest summarizes the session's conversation before the

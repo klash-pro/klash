@@ -795,7 +795,7 @@ func TestFrames_SlideLowerFrameFirst(t *testing.T) {
 	require.True(t, strings.HasPrefix(by["call:w3"], "slide:g/s1:c2:"), "then s1's oldest rounds: %q", by["call:w3"])
 	require.Empty(t, by["call:w7"])
 	require.Equal(t, []string{"g", "g/s1"}, s.frames.stack(t.Context(), s.sessID))
-	require.Contains(t, s.frames.stackLine(t.Context(), s.sessID), "The starts of `g` and `g/s1` left your context to make room; mem.Show(\"g/s1\")")
+	require.Contains(t, s.frames.stackLine(t.Context(), s.sessID), "The start of `g` and the start of `g/s1` left your context to make room; mem.Show(\"g/s1\")")
 	for i := range s.model.requestCount() {
 		validSequence(t, s.model.prompts[i])
 	}
@@ -889,4 +889,73 @@ func TestFrames_SlideBeforeAHiddenPrompt(t *testing.T) {
 	for i := range s.model.requestCount() {
 		validSequence(t, s.model.prompts[i])
 	}
+}
+
+// Rounds before the first frame slide first, all but the first, which
+// anchors the cut; then the frame's own start.
+func TestFrames_SlideRootFirst(t *testing.T) {
+	t.Parallel()
+
+	replies := map[string]memReply{
+		pushG: {text: inG, events: []gnovm.MemFrame{pushed("g", "fix it")}},
+	}
+	steps := [][]fantasy.StreamPart{
+		calling(workCall("w1", 4)),
+		calling(workCall("w2", 4)),
+		calling(memCall("c1", pushG)),
+	}
+	for i := 3; i <= 8; i++ {
+		steps = append(steps, calling(workCall(fmt.Sprintf("w%d", i), 4)))
+	}
+	steps = append(steps, saying("done"))
+	s := newFramesScenario(t, replies, steps, 4_000)
+	s.run("fix it")
+
+	rows := s.rows()
+	require.False(t, slices.ContainsFunc(rows, func(m message.Message) bool { return m.IsSummaryMessage }), "the conversation was not compacted")
+	by := s.poppedBy()
+	require.Empty(t, by["call:w1"], "the first round anchors the cut")
+	require.Equal(t, "slide::w1:c1", by["call:w2"], "the rounds before the frame, up to its push")
+	require.Empty(t, by["call:c1"])
+	require.True(t, strings.HasPrefix(by["call:w3"], "slide:g:c1:"), "then the frame's own start: %q", by["call:w3"])
+	var root, both bool
+	for _, text := range s.userRows() {
+		if strings.Contains(text, "Your rounds before `g` left your context to make room") {
+			root = true
+		}
+		if strings.Contains(text, "Your rounds before `g` and the start of `g` left your context to make room") {
+			both = true
+		}
+	}
+	require.True(t, root, "told of the rounds before the frame")
+	require.True(t, both, "then of the frame's start too")
+	for i := range s.model.requestCount() {
+		validSequence(t, s.model.prompts[i])
+	}
+}
+
+// A summary that could not bring the conversation under the point stops
+// compaction (see compacts); it does not stop the slide, which frees what
+// it says or says it cannot.
+func TestFrames_SlideWhenCompactionGaveUp(t *testing.T) {
+	t.Parallel()
+
+	replies := map[string]memReply{
+		pushG: {text: inG, events: []gnovm.MemFrame{pushed("g", "fix it")}},
+	}
+	steps := [][]fantasy.StreamPart{calling(memCall("c1", pushG))}
+	for i := 1; i <= 8; i++ {
+		steps = append(steps, calling(workCall(fmt.Sprintf("w%d", i), 4)))
+	}
+	steps = append(steps, saying("done"))
+	s := newFramesScenario(t, replies, steps, 4_000)
+	s.agent.(*sessionAgent).compactLevels.Set(s.sessID, compactNever)
+	s.run("fix it")
+
+	rows := s.rows()
+	require.False(t, slices.ContainsFunc(rows, func(m message.Message) bool { return m.IsSummaryMessage }))
+	require.Equal(t, len(steps), s.model.requestCount())
+	by := s.poppedBy()
+	require.True(t, strings.HasPrefix(by["call:w1"], "slide:g:c1:"), "slid all the same: %q", by["call:w1"])
+	require.Empty(t, by["call:w8"])
 }
